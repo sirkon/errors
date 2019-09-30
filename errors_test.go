@@ -98,9 +98,11 @@ func ExampleAnd() {
 	fmt.Println(errors.And(io.EOF, io.EOF))
 	fmt.Println(errors.And(nil, io.EOF))
 	fmt.Println(errors.And(io.EOF, nil))
+	fmt.Println(errors.List{io.EOF})
 
 	// Output:
 	// EOF; EOF
+	// EOF
 	// EOF
 	// EOF
 }
@@ -141,6 +143,13 @@ func TestWrap_WithPanic(t *testing.T) {
 		t.Log(errors.Wrap(nil, "error"))
 	}
 	panicRequired(t, action)
+}
+
+func TestList_WithPanic(t *testing.T) {
+	var l errors.List
+	panicRequired(t, func() {
+		fmt.Println(l.Error())
+	})
 }
 
 // testing stuff
