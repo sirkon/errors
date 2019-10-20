@@ -10,6 +10,8 @@ var _ error = &wrappedError{}
 type wrappedError struct {
 	msgs []string
 	err  error
+
+	ctx *errContext
 }
 
 func (w *wrappedError) Error() string {
@@ -20,6 +22,21 @@ func (w *wrappedError) Error() string {
 	}
 	buf.WriteString(w.err.Error())
 	return buf.String()
+}
+
+// As для поиска контекста
+func (w *wrappedError) As(target interface{}) bool {
+	switch v := target.(type) {
+	case **errContext:
+		if w.ctx != nil {
+			*v = w.ctx
+			return true
+		}
+	case **wrappedError:
+		*v = w
+		return true
+	}
+	return false
 }
 
 // Unwrap returns naked error out of these wraps
