@@ -1,5 +1,7 @@
 package errors
 
+// TODO move this out of this package
+
 // ErrorContextConsumer an abstraction meant to consume structured context of an error.
 type ErrorContextConsumer interface {
 	Bool(name string, value bool)

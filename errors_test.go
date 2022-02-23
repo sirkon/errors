@@ -10,28 +10,24 @@ import (
 
 func ExampleNew() {
 	fmt.Println(errors.New("error example"))
-
 	// output:
 	// error example
 }
 
 func ExampleNewf() {
 	fmt.Println(errors.Newf("error %s", "example"))
-
 	// output:
 	// error example
 }
 
 func ExampleWrap() {
 	fmt.Println(errors.Wrap(errors.Const("example"), "error"))
-
 	// output:
 	// error: example
 }
 
 func ExampleWrapf() {
 	fmt.Println(errors.Wrapf(errors.Const("example"), "formatted error"))
-
 	// output:
 	// formatted error: example
 }
@@ -46,7 +42,6 @@ func ExampleDig() {
 	if pe := errors.Dig[errors.Error](err); pe != nil {
 		fmt.Println((*pe).Error())
 	}
-
 	// output:
 	// error
 }
@@ -61,7 +56,6 @@ func ExampleIs() {
 	if !errors.Is(errors.Wrap(e, "covered"), e) {
 		fmt.Println("must not be here again")
 	}
-
 	// output:
 }
 
@@ -95,7 +89,6 @@ func ExampleGetContextDeliverer() {
 	if errors.GetContextDeliverer(errors.Const("error")) != nil {
 		fmt.Println("must no be here")
 	}
-
 	// output:
 	// wrapped: value
 	// b: true

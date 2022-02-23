@@ -3,7 +3,7 @@ package errors
 import "fmt"
 
 // Unwrap returns naked error out of these wraps
-func (e *Error) Unwrap() error {
+func (e Error) Unwrap() error {
 	return e.err
 }
 
@@ -21,7 +21,7 @@ func Wrap(err error, msg string) Error {
 	}
 }
 
-// Wrapf calls Wrap function with a message built with given format
+// Wrapf calls Wrap function with a message built using given format
 func Wrapf(err error, format string, a ...interface{}) Error {
 	return Wrap(err, fmt.Sprintf(format, a...))
 }
