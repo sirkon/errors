@@ -1,16 +1,17 @@
 package errors
 
-import (
-	"errors"
-	"fmt"
-)
+import "fmt"
 
-// New just an alias for stdlib's New
-func New(msg string) error {
-	return errors.New(msg)
+// New creates new Error with a given message
+func New(msg string) Error {
+	return Error{
+		msg: msg,
+	}
 }
 
-// Newf an alias for fmt.Errorf
+// Newf same as New, with formatted error message
 func Newf(format string, a ...interface{}) error {
-	return fmt.Errorf(format, a...)
+	return Error{
+		msg: fmt.Sprintf(format, a...),
+	}
 }

@@ -1,70 +1,27 @@
 package errors
 
-import (
-	"fmt"
-	"strings"
-)
-
-var _ error = &wrappedError{}
-
-type wrappedError struct {
-	msgs []string
-	err  error
-
-	ctx *errContext
-}
-
-func (w *wrappedError) Error() string {
-	var buf strings.Builder
-	for i := len(w.msgs) - 1; i >= 0; i-- {
-		buf.WriteString(w.msgs[i])
-		buf.WriteString(": ")
-	}
-	buf.WriteString(w.err.Error())
-	return buf.String()
-}
-
-// As для поиска контекста
-func (w *wrappedError) As(target interface{}) bool {
-	switch v := target.(type) {
-	case **errContext:
-		if w.ctx != nil {
-			*v = w.ctx
-			return true
-		}
-	case **wrappedError:
-		*v = w
-		return true
-	}
-	return false
-}
+import "fmt"
 
 // Unwrap returns naked error out of these wraps
-func (w *wrappedError) Unwrap() error {
-	return w.err
+func (e *Error) Unwrap() error {
+	return e.err
 }
 
-// Wrap consturcts a new error by wrapping given message into an error
-func Wrap(err error, msg string) error {
+// Wrap constructs a new error by wrapping given message over the existing one
+func Wrap(err error, msg string) Error {
 	if err == nil {
-		// this is intentional
+		// this is intentional, you must not wrap nil error
 		err.Error()
 	}
-	switch v := err.(type) {
-	case *wrappedError:
-		v.msgs = append(v.msgs, msg)
-		return v
-	default:
-		msgs := make([]string, 1, 4)
-		msgs[0] = msg
-		return &wrappedError{
-			msgs: msgs,
-			err:  err,
-		}
+
+	return Error{
+		msg: msg,
+		err: err,
+		ctx: nil,
 	}
 }
 
 // Wrapf calls Wrap function with a message built with given format
-func Wrapf(err error, format string, a ...interface{}) error {
+func Wrapf(err error, format string, a ...interface{}) Error {
 	return Wrap(err, fmt.Sprintf(format, a...))
 }
