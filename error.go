@@ -15,7 +15,8 @@ type Error struct {
 	msg string
 	err error
 
-	ctx []contextTuple
+	ctxPrefix string
+	ctx       []contextTuple
 }
 
 func (e Error) Error() string {
