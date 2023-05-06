@@ -1,6 +1,7 @@
 package errors_test
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"math"
@@ -80,7 +81,8 @@ func ExampleGetContextDeliverer() {
 		Any("object", map[string]int{
 			"key": 12,
 		}).
-		Any("bytes", []byte("123"))
+		Any("bytes", []byte("123")).
+		Type("type-name", bytes.NewBuffer(nil))
 	err = errors.Wrap(err, "wrapping context").Str("wrapped", "value")
 	d := errors.GetContextDeliverer(err)
 	var cons testContextConsumer
@@ -109,6 +111,7 @@ func ExampleGetContextDeliverer() {
 	// stringer: test stringer
 	// object: map[key:12]
 	// bytes: 123
+	// type-name: *bytes.Buffer
 }
 
 type testContextConsumer struct{}

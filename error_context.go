@@ -224,6 +224,19 @@ func (e Error) Strs(name string, value []string) Error {
 	}
 }
 
+// Type adds type name into the context
+func (e Error) Type(name string, typ any) Error {
+	return Error{
+		msg:       e.msg,
+		err:       e.err,
+		ctxPrefix: e.ctxPrefix,
+		ctx: append(e.ctx, contextTuple{
+			name:  e.ctxPrefix + name,
+			value: fmt.Sprintf("%T", typ),
+		}),
+	}
+}
+
 // Any adds some named value into the context
 func (e Error) Any(name string, value interface{}) Error {
 	return Error{
