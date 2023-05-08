@@ -10,7 +10,7 @@ func New(msg string) Error {
 }
 
 // Newf same as New, with formatted error message
-func Newf(format string, a ...interface{}) error {
+func Newf(format string, a ...interface{}) Error {
 	return Error{
 		msg: fmt.Sprintf(format, a...),
 	}
