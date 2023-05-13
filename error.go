@@ -21,12 +21,14 @@ type Error struct {
 
 func (e Error) Error() string {
 	var buf strings.Builder
-	buf.WriteString(e.msg)
-	if e.err == nil {
-		return buf.String()
+	if e.msg != "" {
+		buf.WriteString(e.msg)
+		if e.err == nil {
+			return buf.String()
+		}
+		buf.WriteString(": ")
 	}
 
-	buf.WriteString(": ")
 	buf.WriteString(e.err.Error())
 	return buf.String()
 }

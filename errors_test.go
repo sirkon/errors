@@ -21,6 +21,26 @@ func ExampleNewf() {
 	// error example
 }
 
+func ExampleJust() {
+	err := errors.Just(io.EOF).Str("name", "value")
+	d := errors.GetContextDeliverer(err)
+	var cons testContextConsumer
+	d.Deliver(cons)
+	fmt.Println(err.Error() == io.EOF.Error())
+
+	err = errors.Just(errors.New("error").Int("value", 1))
+	d = errors.GetContextDeliverer(err)
+	cons = testContextConsumer{}
+	d.Deliver(cons)
+	fmt.Println(err.Error())
+
+	// Output:
+	// name: value
+	// true
+	// value: 1
+	// error
+}
+
 func ExampleWrap() {
 	fmt.Println(errors.Wrap(errors.Const("example"), "error"))
 	// output:
