@@ -12,7 +12,7 @@ func Is(err, target error) bool {
 }
 
 // As errors.As wrapper
-func As(err error, target interface{}) bool {
+func As(err error, target any) bool {
 	return errors.As(err, target)
 }
 
