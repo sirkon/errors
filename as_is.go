@@ -1,28 +1,23 @@
-// Copyright 2018 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
 package errors
 
 import "errors"
 
-// Is errors.Is wrapper
+// Is is a wrapper for [errors.Is] from the standard library.
 func Is(err, target error) bool {
 	return errors.Is(err, target)
 }
 
-// As errors.As wrapper
+// As is a wrapper for [errors.As] from the standard library.
 func As(err error, target any) bool {
 	return errors.As(err, target)
 }
 
-// Dig looks for error of type T in err's chain. Returns a point to an error found
-// or nil otherwise.
-func Dig[T error](err error) *T {
+// AsType is a type-safe generic version of [As], allowing usage without pre-declaring a variable.
+func AsType[T error](err error) (T, bool) {
 	var t T
 	if !errors.As(err, &t) {
-		return nil
+		return t, false
 	}
 
-	return &t
+	return t, true
 }

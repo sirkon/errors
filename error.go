@@ -1,25 +1,25 @@
 package errors
 
 import (
-	"encoding/base64"
 	"errors"
-	"fmt"
+	"go/token"
+	"math"
 	"strings"
-	"unicode/utf8"
 )
 
-var _ error = Error{}
+var _ error = new(Error)
 
-// Error implementation of error with structured context
+// Error is an error implementation with structured context support.
 type Error struct {
 	msg string
 	err error
+	loc token.Position
 
 	ctxPrefix string
 	ctx       []contextTuple
 }
 
-func (e Error) Error() string {
+func (e *Error) Error() string {
 	var buf strings.Builder
 	if e.msg != "" {
 		buf.WriteString(e.msg)
@@ -33,18 +33,13 @@ func (e Error) Error() string {
 	return buf.String()
 }
 
-type contextTuple struct {
-	name  string
-	value interface{}
-}
-
-// Is errors.Is support method
-func (e Error) Is(err error) bool {
+// Is implements support for [Is].
+func (e *Error) Is(err error) bool {
 	if err == nil {
 		return false
 	}
 
-	if v, ok := err.(Error); ok {
+	if v, ok := err.(*Error); ok {
 		if e.err == nil {
 			return e.msg == v.msg && v.err == nil
 		}
@@ -61,15 +56,17 @@ func (e Error) Is(err error) bool {
 	return errors.Is(e.err, err)
 }
 
-// As errors.As support method
-func (e Error) As(target interface{}) bool {
+// As implements support for [As].
+func (e *Error) As(target any) bool {
 	switch v := target.(type) {
-	case *Error:
+	case **Error:
 		*v = e
 	case *errorContextDeliverer:
 		*v = errorContextDeliverer{
+			text:   e.msg,
 			errCtx: e.ctx,
 			next:   e.err,
+			loc:    e.loc,
 		}
 
 		return true
@@ -84,68 +81,81 @@ func (e Error) As(target interface{}) bool {
 	return false
 }
 
-// GetContextDeliverer extracts deliverer from err's chain if it does exist there
+// GetContextDeliverer returns the structured-context deliverer for the given error.
 func GetContextDeliverer(err error) ErrorContextDeliverer {
-	deliverer := Dig[errorContextDeliverer](err)
-	if deliverer != nil {
-		return *deliverer
+	deliverer, ok := AsType[errorContextDeliverer](err)
+	if !ok {
+		return nil
 	}
 
-	return nil
+	return deliverer
 }
 
 type errorContextDeliverer struct {
+	text   string
 	errCtx []contextTuple
+	loc    token.Position
 	next   error
 }
 
-// Deliver to implement ErrorContextDeliverer
+// Deliver implements ErrorContextDeliverer.
 func (e errorContextDeliverer) Deliver(cons ErrorContextConsumer) {
+	cons.NextLink()
 	for _, item := range e.errCtx {
-		switch v := item.value.(type) {
-		case bool:
-			cons.Bool(item.name, v)
-		case int:
-			cons.Int(item.name, v)
-		case int8:
-			cons.Int8(item.name, v)
-		case int16:
-			cons.Int16(item.name, v)
-		case int32:
-			cons.Int32(item.name, v)
-		case int64:
-			cons.Int64(item.name, v)
-		case uint:
-			cons.Uint(item.name, v)
-		case uint8:
-			cons.Uint8(item.name, v)
-		case uint16:
-			cons.Uint16(item.name, v)
-		case uint32:
-			cons.Uint32(item.name, v)
-		case uint64:
-			cons.Uint64(item.name, v)
-		case float32:
-			cons.Float32(item.name, v)
-		case float64:
-			cons.Float64(item.name, v)
-		case string:
-			cons.String(item.name, v)
-		case []byte:
-			if utf8.Valid(v) {
-				cons.String(item.name, string(v))
-				break
+		switch item.kind {
+		case tupleKindBool:
+			var v bool
+			if item.scalar > 0 {
+				v = true
 			}
-			cons.String(item.name, base64.StdEncoding.EncodeToString(v))
-		case fmt.Stringer:
-			cons.String(item.name, v.String())
-		default:
+			cons.Bool(item.name, v)
+		case tupleKindInt:
+			cons.Int(item.name, int(item.scalar))
+		case tupleKindInt8:
+			cons.Int8(item.name, int8(item.scalar))
+		case tupleKindInt16:
+			cons.Int16(item.name, int16(item.scalar))
+		case tupleKindInt32:
+			cons.Int32(item.name, int32(item.scalar))
+		case tupleKindInt64:
+			cons.Int64(item.name, int64(item.scalar))
+		case tupleKindUint:
+			cons.Uint(item.name, uint(item.scalar))
+		case tupleKindUint8:
+			cons.Uint8(item.name, uint8(item.scalar))
+		case tupleKindUint16:
+			cons.Uint16(item.name, uint16(item.scalar))
+		case tupleKindUint32:
+			cons.Uint32(item.name, uint32(item.scalar))
+		case tupleKindUint64:
+			cons.Uint64(item.name, item.scalar)
+		case tupleKindFloat32:
+			cons.Flt32(item.name, math.Float32frombits(uint32(item.scalar)))
+		case tupleKindFloat64:
+			cons.Flt64(item.name, math.Float64frombits(item.scalar))
+		case tupleKindString:
+			cons.Str(item.name, item.str)
+		case tupleKindStrings, tupleKindAny:
+			cons.Any(item.name, item.value)
+		case tupleKindInvalid:
 			cons.Any(item.name, item.value)
 		}
 	}
 
-	if v := Dig[errorContextDeliverer](e.next); v != nil {
-		(*v).Deliver(cons)
+	// Add the location info if it is set.
+	var descr ErrorChainLinkDescriptor
+	switch {
+	case e.next == nil:
+		descr = ErrorChainLinkNew(e.text)
+	case e.text == "":
+		descr = ErrorChainLinkContext{}
+	default:
+		descr = ErrorChainLinkWrap(e.text)
+	}
+	cons.SetLinkInfo(e.loc, descr)
+
+	if v, ok := AsType[errorContextDeliverer](e.next); ok {
+		v.Deliver(cons)
 	}
 }
 

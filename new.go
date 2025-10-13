@@ -1,17 +1,35 @@
 package errors
 
-import "fmt"
+import (
+	"fmt"
+)
 
-// New creates new Error with a given message
-func New(msg string) Error {
-	return Error{
+// New creates a new error with the given message.
+//
+//go:noinline
+func New(msg string) *Error {
+	res := &Error{
 		msg: msg,
 	}
+
+	if insertLocations {
+		res.setLoc()
+	}
+
+	return res
 }
 
-// Newf same as New, with formatted error message
-func Newf(format string, a ...interface{}) Error {
-	return Error{
+// Newf creates a new error with the given formatted message.
+//
+//go:noinline
+func Newf(format string, a ...any) *Error {
+	res := &Error{
 		msg: fmt.Sprintf(format, a...),
 	}
+
+	if insertLocations {
+		res.setLoc()
+	}
+
+	return res
 }

@@ -1,21 +1,23 @@
 package errors
 
-// Just a simple wrapper over an error that allows to add
-// structured context values without adding any text info.
-func Just(err error) Error {
+// Just is for when annotation is not needed, but structured context is.
+// This function solves that problem by returning an error with the text from the given one
+// and allowing to add structured values.
+func Just(err error) *Error {
 	if err == nil {
-		err.Error()
+		_ = err.Error()
 	}
 
-	v, ok := err.(Error)
-	if ok {
-		return v
-	}
-
-	return Error{
+	res := &Error{
 		msg:       "",
 		err:       err,
 		ctxPrefix: "",
 		ctx:       nil,
 	}
+
+	if insertLocations {
+		res.setLoc()
+	}
+
+	return res
 }

@@ -1,27 +1,54 @@
 package errors
 
-import "fmt"
+import (
+	"fmt"
+)
 
-// Unwrap returns naked error out of these wraps
-func (e Error) Unwrap() error {
+// Unwrap method needed for [errors.Is] and [errors.As] to work.
+func (e *Error) Unwrap() error {
 	return e.err
 }
 
-// Wrap constructs a new error by wrapping given message over the existing one
-func Wrap(err error, msg string) Error {
+// Wrap annotates an error with a text message.
+//
+//go:noinline
+func Wrap(err error, msg string) *Error {
 	if err == nil {
-		// this is intentional, you must not wrap nil error
-		err.Error()
+		// TODO consider an option to create a fake error instead.
+		_ = err.Error()
 	}
 
-	return Error{
+	res := &Error{
 		msg: msg,
 		err: err,
 		ctx: nil,
 	}
+
+	if insertLocations {
+		res.setLoc()
+	}
+
+	return res
 }
 
-// Wrapf calls Wrap function with a message built using given format
-func Wrapf(err error, format string, a ...interface{}) Error {
-	return Wrap(err, fmt.Sprintf(format, a...))
+// Wrapf annotates an error with a formatted text message.
+//
+//go:noinline
+func Wrapf(err error, format string, a ...any) *Error {
+	if err == nil {
+		// TODO consider an option to create a fake error instead.
+		_ = err.Error()
+	}
+
+	res := &Error{
+		msg: fmt.Sprintf(format, a...),
+		err: err,
+		ctx: nil,
+	}
+
+	if insertLocations {
+		res.setLoc()
+	}
+
+	return res
 }

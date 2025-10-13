@@ -1,13 +1,13 @@
 package errors
 
-// Const an implementation of error that can be a constant
+// Const is a type implementing the error interface and capable of being a constant.
 type Const string
 
 func (c Const) Error() string {
 	return string(c)
 }
 
-// Is for errors.Is
+// Is for [errors.Is].
 func (c Const) Is(err error) bool {
 	v, ok := err.(Const)
 	if !ok {
@@ -17,8 +17,8 @@ func (c Const) Is(err error) bool {
 	return v == c
 }
 
-// As for errors.As
-func (c Const) As(target interface{}) bool {
+// As for [errors.As].
+func (c Const) As(target any) bool {
 	v, ok := target.(*Const)
 	if !ok {
 		return false
