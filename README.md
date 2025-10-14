@@ -134,7 +134,8 @@ func (ctx *Context) Flt64(name, value) *Context {
 
 It worked, but the following issues emerged:
 
-- Such expressions are harder to read, which matters given how often they appear.
+- Such expressions are harder to read, which matters given how often they appear. Because human perception is better when starting from the main thing, going down to details if needed. It is the opposite with
+  this approach: start from error context (details) and only add the essence at the very end.
 - The package context `gitlab.example.com/common/errors` became very large, making IDE autocompletion cumbersome.
   We shouldn’t be fighting the tool while we work.
 
