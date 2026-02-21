@@ -159,7 +159,37 @@ We disabled location logging in both logger and this library (which makes it at 
 | fmt.Errorf and text format      | 2611  |
 
 As you can see, fmt.Errorf with text format is just 14% faster than `Prod` flat context solution being worse in every
-other way possible. Multiple logging is slow and just an antipattern. 
+other way possible. Multiple logging is slow and just an antipattern.
+
+## Appendix.
+
+This is how full Dev output looks like:
+
+```json
+{
+  "time": "2026-02-21T23:58:48.542593+03:00",
+  "level": "ERROR",
+  "msg": "log error with tree structured context",
+  "err": "check error: this is an error",
+  "@err": {
+    "NEW: this is an error": {
+      "@location": "/Users/d.cheremisov/Sources/mine/errors/internal/example/example.go:16",
+      "bytes": "AQID",
+      "text-bytes": "Hello World!"
+    },
+    "WRAP: check error": {
+      "@location": "/Users/d.cheremisov/Sources/mine/errors/internal/example/example.go:19",
+      "count": 333,
+      "is-wrap-layer": true
+    },
+    "CTX": {
+      "@location": "/Users/d.cheremisov/Sources/mine/errors/internal/example/example.go:22",
+      "pi": 3.141592653589793,
+      "e": 2.718281828459045
+    }
+  }
+}
+```
 
 
 
