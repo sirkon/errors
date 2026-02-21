@@ -2,53 +2,66 @@ package errors
 
 import (
 	"fmt"
+	"log/slog"
 )
 
-// Unwrap method needed for [errors.Is] and [errors.As] to work.
-func (e *Error) Unwrap() error {
-	return e.err
-}
-
-// Wrap annotates an error with a text message.
-//
-//go:noinline
+// Wrap annotates given error with the given message.
 func Wrap(err error, msg string) *Error {
-	if err == nil {
-		// TODO consider an option to create a fake error instead.
-		_ = err.Error()
-	}
-
-	res := &Error{
-		msg: msg,
-		err: err,
-		ctx: nil,
-	}
-
-	if insertLocations {
-		res.setLoc()
-	}
-
-	return res
+	return wrap(err, msg)
 }
 
-// Wrapf annotates an error with a formatted text message.
-//
-//go:noinline
+// Wrapf annotates given error with the given format.
 func Wrapf(err error, format string, a ...any) *Error {
-	if err == nil {
-		// TODO consider an option to create a fake error instead.
-		_ = err.Error()
+	return wrap(err, fmt.Sprintf(format, a...))
+}
+
+// Just возвращает *Error позволяющий добавить контекст данной ошибке.
+func Just(err error) *Error {
+	e, ok := err.(*Error)
+	if !ok {
+		res := &Error{
+			attrs: make([]errorAttr, 0, errorContextLengthPrediction),
+		}
+		res.attrs = append(res.attrs, errorAttr{
+			kind:  errorAttrKindOutterJust,
+			value: slog.AnyValue(err),
+		})
+		return res
 	}
 
-	res := &Error{
-		msg: fmt.Sprintf(format, a...),
-		err: err,
-		ctx: nil,
-	}
+	e.attrs = append(e.attrs, errorAttr{
+		kind: errorAttrKindJust,
+	})
 
 	if insertLocations {
-		res.setLoc()
+		e.setLoc(2)
 	}
 
-	return res
+	return e
+}
+
+func wrap(err error, msg string) *Error {
+	e, ok := err.(*Error)
+	if !ok {
+		res := &Error{
+			attrs: make([]errorAttr, 0, errorContextLengthPrediction),
+		}
+		res.attrs = append(res.attrs, errorAttr{
+			kind:  errorAttrKindOutterWrap,
+			key:   msg,
+			value: slog.AnyValue(err),
+		})
+		return res
+	}
+
+	e.attrs = append(e.attrs, errorAttr{
+		kind: errorAttrKindWrap,
+		key:  msg,
+	})
+
+	if insertLocations {
+		e.setLoc(3)
+	}
+
+	return e
 }

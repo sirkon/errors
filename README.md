@@ -14,37 +14,30 @@ See a minimal setup and usage example in [internal/example/main.go](internal/exa
 
 ## Features and goals
 
-- A drop-in replacement for the standard errors package.
+- Errors are considered to be processes, not values. This means you should not compare two errors as you would
+  not try to compare two processes and do not use `errors.New` and `errors.Newf` to create sentinel errors. There are
+  `errors.NewSentinel` and `errors.NewSentinelf` for this.
+- Almost drop-in replacement for the standard errors package.
 - Avoid the inconsistency in the standard library where you use `errors.New` but `fmt.Errorf`.
-- Built-in support for the most common error-wrapping pattern: "annotation: %w".
-- Structured context support, so you don’t have to log the same error at multiple layers just to add details — simply attach context to the error and the extra data will be rendered by default.
+- Real first class error wrapping support with `errors.Wrap` and `errors.Wrapf`.
+- Structured context support, so you don’t have to log the same error at multiple layers just to add details — simply
+  attach context to the error and the extra data will be rendered by default.
 - Optional inclusion of the file:line location where the error was created/handled. See [loc.go](./loc.go).
-- A dedicated type for defining constant errors.
 
 ## Usage examples
 
 ```go
+// You can create errors and attach context to it.
+return errors.New("unexpected name").Str("expected", expected).Str("actual", name)
+
+// You can wrap and add context.
 if err != nil {
-    return errors.Wrap(err, "do something").Int("int", intVal).Str("str", strVal)
+return errors.Wrap(err, "do something").Int("int", intVal).Str("str", strVal)
 }
-```
 
-```go
-const (
-    Err1 errors.Const = "error 1"
-    Err2 = "error 2"
-    …
-)
-
-…
-
-io.EOF = errors.New("new io.EOF") // This compiles and works.
-Err1 = errors.New("new error 1") // This does not compile.
-```
-
-```go
+// Sometimes text annotation doesn't make a sense, but some context info does.
 if err != nil {
-    return errors.New("new error").Loc(0)
+return errors.Just(err).Int("int", intVal)
 }
 ```
 
@@ -52,99 +45,121 @@ if err != nil {
 
 The [benchmark](./bench_test.go) produced the following numbers:
 
-| Benchmark Name                           | ns/op | B/op   | Allocs/op |
-|------------------------------------------|-------|--------|-----------|
-| errors.Wrap                              | 188.7 | 760    | 14        |
-| fmt.Errorf without text formatting       | 240.2 | 296    | 9         |
-| errors.Wrapf                             | 364.6 | 1200   | 20        |
-| fmt.Errorf with text formatting          | 358.8 | 576    | 12        |
-| errors.Wrap with 4 context values        | 303.8 | 1248 B | 18        |
-| errors.Wrap with large context           | 1024  | 4634   | 49        |
-| fmt.Errorf with large context            | 1495  | 2769   | 18        |
+| Operation                                                   | ns/op  | B/op | Allocs/op             |
+|-------------------------------------------------------------|--------|------|-----------------------|
+| Wrap.                                                       | 126.7  | 528  | 6                     |
+| fmt.Errorf("…: %w")                                         | 252.3  | 296  | 9                     |
+| Wrap with short context.                                    | 130.6  | 528  | 6                     |
+| fmt.Errorf with text formatting matching that short context | 306.9  | 512  | 8 (strange, why -1 ?) |
+| errors.Wrap with large context                              | 602.2  | 3898 | 11                    |
+| fmt.Errorf with large text formatting                       | 1214.0 | 2769 | 18                    |
 
+As you see, this library has both faster and doesn't degrade at the scale.
 
-As expected, performance is roughly on par thanks to less reliance on reflection, even in the `Wrapf` case.
-It seems that `%w` itself is relatively heavy. Fewer allocations per operation do not always help.
+Now, pipeline benchmarking. We get an error, we annotate it, we log it. Four cases in here:
 
-One reason for the higher number of allocations and memory usage is the chosen design: every operation creates
-a new `error.Error` object. The approach can be changed to reuse existing objects, which yields noticeably
-better performance:
+1. Development mode logging with slog.
+2. Production mode logging with slog.
+3. We log at every step of stdlib's error processing to mimic this library' behavior.
+4. We just put everything in text format to deliver the context.
 
-| Benchmark Name                       | ns/op | B/op | Allocs/op |
-|--------------------------------------|-------|------|-----------|
-| errors.Wrap                          | 101.5 | 312  | 6         |
-| fmt.Errorf without text formatting   | 256.1 | 296  | 9         |
-| errors.Wrapf                         | 307.4 | 976  | 14        |
-| fmt.Errorf with text formatting      | 350.1 | 576  | 12        |
+Here outputs look like
 
-This result comes from minimal changes to the library logic. There are additional easy ways to reduce allocations
-(which would effectively bring the library back to its prototype state, lol). These changes are not part of the
-current codebase, so the first table should be considered authoritative.
+Dev.
 
-> In any case, `errors.Wrapf` and `errors.Newf` should have no fewer allocations than `Errorf`, because they can do
-> everything `Errorf("annotation: %w", err)` does plus some extra work that costs something.
->
-> Memory usage will also be higher because we store more information.
-
-### Performance when saving error locations
-
-With saving of error locations enabled, performance drops by roughly 6–7x. This is about 1600 ns/op for `errors.Wrap`
-and about 6900 ns/op for `errors.Wrap` with a long context.
-
-## About adding structured context
-
-Currently, the pattern is "<create/wrap error>" followed by a chain of context additions:
-
-```go
-errors.New("error").Int("int-val", intVal).Str("str-val", strVal)
-```
-
-We considered the following alternatives:
-
-### Like in zap
-
-```go
-return errors.Wrap(err, "do something", errors.Int("int-val", intVal), errors.Str("str-val"))
-```
-
-This approach was dismissed because it makes it awkward to provide formatted error messages.
-
-### Like in zerolog
-
-In one of the prototypes — to be precise, in a prototype of a prototype — we tried a zerolog-like approach:
-
-```go
-return errors.Flt64("x", x).Flt64("y", y).Errorf("do %v", action)
-```
-
-This required keeping both functions and methods with the same names:
-
-```go
-func Flt64(name string, value float64) *Context {
-    return NewContext().Flt64(name, value)
-}
-
-…
-
-func (ctx *Context) Flt64(name, value) *Context {
-    ctx.values = append(ctx.values, ctxTouple{name, value})
-    return ctx
+```json
+{
+  "time": "2026-02-21T23:24:48.261254+03:00",
+  "level": "ERROR",
+  "msg": "log error with tree structured context",
+  "err": "check error: this is an error",
+  "@err": {
+    "NEW: this is an error": {
+      "bytes": "AQID",
+      "text-bytes": "Hello World!"
+    },
+    "WRAP: check error": {
+      "count": 333,
+      "is-wrap-layer": true
+    },
+    "CTX": {
+      "pi": 3.141592653589793,
+      "e": 2.718281828459045
+    }
+  }
 }
 ```
 
-It worked, but the following issues emerged:
+Prod.
 
-- Such expressions are harder to read, which matters given how often they appear. Because human perception is better when starting from the main thing, going down to details if needed. It is the opposite with
-  this approach: start from error context (details) and only add the essence at the very end.
-- The package context `gitlab.example.com/common/errors` became very large, making IDE autocompletion cumbersome.
-  We shouldn’t be fighting the tool while we work.
+```json
+{
+  "time": "2026-02-21T23:24:48.261709+03:00",
+  "level": "ERROR",
+  "msg": "log error with flat structured context",
+  "err": "check error: this is an error",
+  "@err": {
+    "bytes": "AQID",
+    "text-bytes": "Hello World!",
+    "count": 333,
+    "is-wrap-layer": true,
+    "pi": 3.141592653589793,
+    "e": 2.718281828459045
+  }
+}
+```
 
-### Summary comparison of approaches
+fmt.Errorf with the logging at every step
 
-|                     | Current                                                              | Zap                                                          | Zerolog                                                                                                                                                                                                                     |
-|---------------------|----------------------------------------------------------------------|--------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Readability         | High.                                                                | High.                                                        | Significantly worse than the others.<br/>Because it reverses the order of "general → specific".<br/>Instead of "error, error details" you get<br/>"error details, error".<br/>Gets very bad when there is a lot of context. |
-| Formatting support  | Yes.                                                                 | No.                                                          | Yes.                                                                                                                                                                                                                        |
-| Library footprint   | Low.                                                                 | Significant.<br/>You need to maintain many helper functions. | Slightly worse than Zap.                                                                                                                                                                                                    |
-| Context composition | Somewhat complicated.<br/>Requires a special object.                 | Somewhat complicated.<br/>Requires a special object.         | Supported.                                                                                                                                                                                                                  |
-| Performance         | Lowest among the methods.<br/>About 2× slower than the Zerolog-like. | Medium.                                                      | Mirrors the usual Zerolog vs Zap comparison (for loggers).                                                                                                                                                                  |
+```json lines
+{
+  "time": "2026-02-21T23:34:53.317258+03:00",
+  "level": "ERROR",
+  "msg": "failed to do something 1",
+  "err": "this is an error",
+  "bytes": "AQID",
+  "text-bytes": "Hello World!"
+}
+{
+  "time": "2026-02-21T23:34:53.317293+03:00",
+  "level": "ERROR",
+  "msg": "failed to check error",
+  "err": "this is an error",
+  "count": 333,
+  "is-wrap-layer": true
+}
+{
+  "time": "2026-02-21T23:34:53.317299+03:00",
+  "level": "ERROR",
+  "msg": "got an error",
+  "err": "check error: this is an error",
+  "pi": 3.141592653589793,
+  "e": 2.718281828459045
+}
+```
+
+fmt.Errorf with text format.
+
+```json
+{
+  "time": "2026-02-21T23:29:56.447285+03:00",
+  "level": "ERROR",
+  "msg": "failed to do something 1",
+  "err": "context pi[3.141592653589793] e[2.718281828459045]: check error count[333] is-wrap-layer[true]: this is an error bytes[[1 2 3]] text-bytes[Hello World!]"
+}
+```
+
+We disabled location logging in both logger and this library (which makes it at every New, Wrap and Just).
+
+| Test                            | ns/op |
+|---------------------------------|-------|
+| Dev                             | 3266  |
+| Prod                            | 2990  |
+| fmt.Errorf and multiple logging | 7049  |
+| fmt.Errorf and text format      | 2611  |
+
+As you can see, fmt.Errorf with text format is just 14% faster than `Prod` flat context solution being worse in every
+other way possible. Multiple logging is slow and just an antipattern. 
+
+
+

@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/sirkon/errors"
+	errors "awesome-errors"
 )
 
 var count int
@@ -137,7 +137,7 @@ func getErrorsWrapContext() error {
 func getErrorsWrapLargerContext() error {
 	err := errors.Wrap(io.ErrClosedPipe, "read stream").Int("buf-length", 4096)
 	err = errors.Wrap(err, "read with retries").
-		Flt64("average-failure-response-delay", 0.12).
+		F64("average-failure-response-delay", 0.12).
 		Int("how-many-retries", 4)
 	err = errors.Wrapf(err, "read GetFile stream")
 	err = errors.Wrap(err, "transfer data").
@@ -146,7 +146,7 @@ func getErrorsWrapLargerContext() error {
 	err = errors.Wrap(err, "get image data").Str("data-id", "6142a749-aaa2-4383-b6bd-9d0adfd9d330")
 	err = errors.Wrap(err, "resize image").
 		Str("img-type", "image/png").
-		Flt64("scale", 1.2).
+		F64("scale", 1.2).
 		Str("sharpening-type", "GAUSSIAN")
 	err = errors.Wrap(err, "process user avatar")
 	err = errors.Wrapf(err, "finish %s", "user-create-routine").
@@ -154,8 +154,8 @@ func getErrorsWrapLargerContext() error {
 	err = errors.Wrap(err, "replay wal session").
 		Str("wal-session-id", "0bf25c6a-d5d6-4b08-b381-9c6a26ea55c0").
 		Int("session-replay-no", 3).
-		Flt64("replay-duration", 0.87323).
-		Flt64("replays-left", 7)
+		F64("replay-duration", 0.87323).
+		Int("replays-left", 7)
 
 	return err
 }
@@ -184,4 +184,8 @@ func getFmtErrorfLargerContext() error {
 	)
 
 	return err
+}
+
+func init() {
+	errors.DoNotInsertLocations()
 }

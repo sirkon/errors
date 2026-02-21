@@ -1,8 +1,9 @@
 package errors
 
 import (
-	"go/token"
+	"log/slog"
 	"runtime"
+	"strconv"
 )
 
 var insertLocations bool
@@ -29,7 +30,10 @@ func DoNotInsertLocations() {
 // setLoc adds the file:line location of error handling to the context.
 //
 //go:noinline
-func (e *Error) setLoc() {
-	_, fn, line, _ := runtime.Caller(2)
-	e.loc = token.Position{Filename: fn, Line: line}
+func (e *Error) setLoc(skip int) {
+	_, fn, line, _ := runtime.Caller(skip)
+	e.attrs = append(e.attrs, errorAttr{
+		kind:  errorAttrKindLoc,
+		value: slog.StringValue(fn + ":" + strconv.Itoa(line)),
+	})
 }
