@@ -20,9 +20,9 @@ See a minimal setup and usage example in [internal/example/main.go](internal/exa
 - Almost drop-in replacement for the standard errors package.
 - Avoid the inconsistency in the standard library where you use `errors.New` but `fmt.Errorf`.
 - Real first class error wrapping support with `errors.Wrap` and `errors.Wrapf`.
-- Structured context support, so you don’t have to log the same error at multiple layers just to add details — simply
+- Structured context support, so you don’t have to log the same error at multiple stages just to add details — simply
   attach context to the error and the extra data will be rendered by default.
-- Optional inclusion of the file:line location where the error was created/handled. See [loc.go](./loc.go).
+- Optional inclusion of the file:line location where the error was created/handled with `errors.InsertLocations()`.
 
 ## Usage examples
 
@@ -151,15 +151,23 @@ fmt.Errorf with text format.
 
 We disabled location logging in both logger and this library (which makes it at every New, Wrap and Just).
 
-| Test                            | ns/op |
-|---------------------------------|-------|
-| Dev                             | 3266  |
-| Prod                            | 2990  |
-| fmt.Errorf and multiple logging | 7049  |
-| fmt.Errorf and text format      | 2611  |
+| Test                            | ns/op Apple M4Pro | ns/op Intel 12700K on Linux | ns/op AMD Ryzen 7 5700X on Linux |
+|---------------------------------|-------------------|-----------------------------|----------------------------------|
+| Tree                            | 3119              | 4498                        | 5763                             |
+| Flat                            | 2928              | 4005                        | 5454                             |
+| fmt.Errorf and multiple logging | 7037              | 4542                        | 11731                            |
+| fmt.Errorf and text format      | 2611              | 1888                        | 4624                             |
 
-As you can see, fmt.Errorf with text format is just 14% faster than `Prod` flat context solution being worse in every
-other way possible. Multiple logging is slow and just an antipattern.
+We see how fast Intel on dumb things: AVX/whatever SIMD makes wonders for text formatting and syscalls are relatively cheap with them.
+Apple branch prediction is out of this world but Darwin is not on par with Linux.
+And AMD … well, it is known they are not single core champions.
+
+It is safe to say context extraction in Tree and Flat deconstructions will benefit from broader branch prediction
+units on EPYCs and Zeons in the manner close to M4.
+
+Anyway, fmt.Errorf with text format will be no-go in any half-sane environment due to observability it fails
+to deliver or making it too expensive. And Flat context which is the best for observability goals is still faster
+than multiple logging (which is an antipattern and just harder to do).
 
 ## Appendix.
 
