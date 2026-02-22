@@ -3,8 +3,8 @@ package errors_test
 import (
 	"fmt"
 
-	errors "awesome-errors"
-	"awesome-errors/errorsctx"
+	"github.com/sirkon/errors"
+	"github.com/sirkon/errors/errorsctx"
 )
 
 func ExampleGetContextDeliverer() {

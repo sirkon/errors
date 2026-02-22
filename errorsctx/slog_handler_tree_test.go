@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	errors "awesome-errors"
-	"awesome-errors/errorsctx"
+	"github.com/sirkon/errors"
+	"github.com/sirkon/errors/errorsctx"
 )
 
 var (

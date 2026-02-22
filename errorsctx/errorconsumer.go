@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	errors "awesome-errors"
+	"github.com/sirkon/errors"
 )
 
 // Consumer an implementation of [errors.ErrorContextConsumer] providing
