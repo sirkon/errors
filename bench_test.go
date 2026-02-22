@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	errors "awesome-errors"
+	"github.com/sirkon/errors"
 )
 
 var count int

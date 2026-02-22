@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	errors "awesome-errors"
+	"github.com/sirkon/errors"
 )
 
 // SLogHandlerTree handler for a tree view of an error context.

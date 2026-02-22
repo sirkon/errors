@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	errors "awesome-errors"
+	"github.com/sirkon/errors"
 )
 
 // SLogHandlerFlat handler for a flat view of an error context.
