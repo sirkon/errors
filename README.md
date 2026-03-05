@@ -43,7 +43,7 @@ return errors.Just(err).Int("int", intVal)
 
 ## Performance
 
-The [benchmark](./bench_test.go) produced the following numbers:
+The [benchmark](./bench_test.go) produced the following numbers on Apple M4Pro:
 
 | Operation                                                   | ns/op  | B/op | Allocs/op             |
 |-------------------------------------------------------------|--------|------|-----------------------|
@@ -53,6 +53,17 @@ The [benchmark](./bench_test.go) produced the following numbers:
 | fmt.Errorf with text formatting matching that short context | 306.9  | 512  | 8 (strange, why -1 ?) |
 | errors.Wrap with large context                              | 602.2  | 3898 | 11                    |
 | fmt.Errorf with large text formatting                       | 1214.0 | 2769 | 18                    |
+
+Intel 12700K
+
+| Operation                                                   | ns/op  | B/op | Allocs/op |
+|-------------------------------------------------------------|--------|------|-----------|
+| Wrap.                                                       | 210.1  | 528  | 6         |
+| fmt.Errorf("…: %w")                                         | 441.8  | 296  | 9         |
+| Wrap with short context.                                    | 229.1  | 528  | 6         |
+| fmt.Errorf with text formatting matching that short context | 553.4  | 512  | 8         |
+| errors.Wrap with large context                              | 921.6  | 3896 | 11        |
+| fmt.Errorf with large text formatting                       | 2087.0 | 2768 | 18        |
 
 As you see, this library has both faster and doesn't degrade at the scale.
 
@@ -151,23 +162,80 @@ fmt.Errorf with text format.
 
 We disabled location logging in both logger and this library (which makes it at every New, Wrap and Just).
 
-| Test                            | ns/op Apple M4Pro | ns/op Intel 12700K on Linux | ns/op AMD Ryzen 7 5700X on Linux |
-|---------------------------------|-------------------|-----------------------------|----------------------------------|
-| Tree                            | 3119              | 4498                        | 5763                             |
-| Flat                            | 2928              | 4005                        | 5454                             |
-| fmt.Errorf and multiple logging | 7037              | 4542                        | 11731                            |
-| fmt.Errorf and text format      | 2611              | 1888                        | 4624                             |
+| Test                                       | ns/op Apple M4Pro | ns/op Intel 12700K on Linux |
+|--------------------------------------------|-------------------|-----------------------------|
+| Tree                                       | 3119              | 2866                        |
+| Flat                                       | 2887              | 2650                        |
+| fmt.Errorf and multiple logging            | 7037              | 4674                        |
+| fmt.Errorf and text format                 | 2611              | 1755                        |
+| Error context assemble and formatting cost | 1190              | 2056                        |
+| Log write cost. Basically, syscall cost    | 1731              | 540.2                       |
 
-We see how fast Intel on dumb things: AVX/whatever SIMD makes wonders for text formatting and syscalls are relatively cheap with them.
-Apple branch prediction is out of this world but Darwin is not on par with Linux.
-And AMD … well, it is known they are not single core champions.
+As you can see, Intel is a lot dumber and spends almost twice more time on slog formatting and this became a culprit
+point: a construction and then the rendition of more complex structs in slog costs almost a microsecond over dummy
+text.
 
-It is safe to say context extraction in Tree and Flat deconstructions will benefit from broader branch prediction
-units on EPYCs and Zeons in the manner close to M4.
+I actually work around it in my [sirkon/blog](https://github.com/sirkon/blog) and structured errors package
+[sirkon/blog/beer](https://github.com/sirkon/blog/beer), where I got rid of formatting altogether using binary logs.
+So, my `beer.Error` costs a bit more than `errors.Error` (less than `fmt.Errorf` anyway) and avoid formatting at all
+by just pushing bytes. Where I have structured view when needed and this doesn't cost an arm:
 
-Anyway, fmt.Errorf with text format will be no-go in any half-sane environment due to observability it fails
-to deliver or making it too expensive. And Flat context which is the best for observability goals is still faster
-than multiple logging (which is an antipattern and just harder to do).
+| Test                         | ns/op Intel 12700K on Linux |
+|------------------------------|-----------------------------|
+| blog beer.Error with context | 690.6                       |
+| blog text error              | 1262                        |
+| slog text error              | 1772                        |
+
+And with then the beer.Error's related output will look like
+
+```
+2026-03-05T14:24:44 INFO (/home/emacs/Sources/mine/blog/internal/playground/main.go:31) test
+  ├─ text: Hello world!
+  ├─ time: 2026-03-05 14:24:44.387840771 +0300 MSK
+  ├─ math-constants
+  │  ├─ pi: 3.141592653589793
+  │  └─ e: 2.718281828459045
+  ├─ duration: 16.455µs
+  ├─ err: EOF
+  ├─ words: [I am waiting for the spring]
+  └─ err-with-ctx
+     ├─ text: top check: another check: check error: EOF
+     └─ @context
+        ├─ WRAP: check error
+        │  ├─ @location: /home/emacs/Sources/mine/blog/internal/playground/main.go:27
+        │  └─ tag: tag value
+        ├─ CTX
+        │  ├─ @location: /home/emacs/Sources/mine/blog/internal/playground/main.go:28
+        │  └─ key: 12
+        └─ WRAP: another check
+           ├─ @location: /home/emacs/Sources/mine/blog/internal/playground/main.go:29
+           └─ bool: true
+```
+
+for this code
+
+```go
+start := time.Now()
+err = beer.Wrap(io.EOF, "check error").Str("tag", "tag value")
+err = beer.Just(err).Int("key", 12)
+err = beer.Wrap(err, "another check").Bool("bool", true)
+err = fmt.Errorf("top check: %w", err)
+log.Info(context.Background(),
+    "test",
+    blog.Str("text", "Hello world!"),
+    blog.Time("time", start),
+    blog.Group("math-constants",
+        blog.Flt64("pi", math.Pi),
+        blog.Flt64("e", math.E),
+    ),
+    blog.Duration("duration", time.Since(start)),
+    blog.Err(io.EOF),
+    blog.Strs("words", []string{"I", "am", "waiting", "for", "the", "spring"}),
+    blog.Error("err-with-ctx", err),
+)
+```
+
+But here with text logs we have a classical tradeoff, where richer stuff may be too expensive.
 
 ## Appendix.
 

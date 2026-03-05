@@ -21,6 +21,14 @@ func BenchmarkErrorsWrapFixed(b *testing.B) {
 	}
 }
 
+func BenchmarkErrorsWrapFixedNoMsg(b *testing.B) {
+	b.ReportAllocs()
+
+	for range b.N {
+		_ = getErrorsWrapErrorNoContext()
+	}
+}
+
 func BenchmarkFmtErrorfFixed(b *testing.B) {
 	b.ReportAllocs()
 
