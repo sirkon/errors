@@ -21,11 +21,15 @@ func (h *SLogHandlerFlat) Enabled(ctx context.Context, level slog.Level) bool {
 }
 
 func (h *SLogHandlerFlat) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return h.handler.WithAttrs(attrs)
+	return &SLogHandlerFlat{
+		handler: h.handler.WithAttrs(attrs),
+	}
 }
 
 func (h *SLogHandlerFlat) WithGroup(name string) slog.Handler {
-	return h.handler.WithGroup(name)
+	return &SLogHandlerFlat{
+		handler: h.handler.WithGroup(name),
+	}
 }
 
 func (h *SLogHandlerFlat) Handle(ctx context.Context, r slog.Record) error {

@@ -24,11 +24,15 @@ func (h *SLogHandlerTree) Enabled(ctx context.Context, level slog.Level) bool {
 }
 
 func (h *SLogHandlerTree) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return h.handler.WithAttrs(attrs)
+	return &SLogHandlerTree{
+		handler: h.handler.WithAttrs(attrs),
+	}
 }
 
 func (h *SLogHandlerTree) WithGroup(name string) slog.Handler {
-	return h.handler.WithGroup(name)
+	return &SLogHandlerTree{
+		handler: h.handler.WithGroup(name),
+	}
 }
 
 // Handle handles errors.
