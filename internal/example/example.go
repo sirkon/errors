@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"math"
 	"os"
@@ -28,6 +29,10 @@ func main() {
 	))
 
 	logger.Error("log error with tree structured context", err)
+	logger.Error("log marked error with tree", errors.Mark(err, new(0)))
+	logger.Error("log marked foreign error with tree beneath",
+		errors.Mark(fmt.Errorf("foreign wrap: %w", err), new(0)),
+	)
 
 	logger = slog.New(errorsctx.NewSLogHandlerFlat(
 		slog.NewJSONHandler(&fancyJSONWriter{}, &slog.HandlerOptions{}),

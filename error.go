@@ -92,7 +92,7 @@ func (e *Error) As(target any) bool {
 
 	for _, attr := range e.attrs {
 		switch attr.kind {
-		case errorAttrKindOutterWrap, errorAttrKindOutterJust:
+		case errorAttrKindOutterWrap, errorAttrKindOutterJust, errorAttrKindPhantomJust:
 			if errors.As(attr.value.Any().(error), target) {
 				return true
 			}

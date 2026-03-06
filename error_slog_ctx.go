@@ -37,6 +37,8 @@ func newSlogTreeContextState() *slogTreeContextState {
 func (s *slogTreeContextState) feed(attrs []errorAttr) {
 	for _, attr := range attrs {
 		switch attr.kind {
+		case errorAttrKindMarker:
+			continue
 		case errorAttrKindNew:
 			s.closeStage()
 			s.name = "NEW: " + attr.key
@@ -72,6 +74,15 @@ func (s *slogTreeContextState) feed(attrs []errorAttr) {
 
 			s.closeStage()
 			s.name = "CTX"
+
+		case errorAttrKindPhantomJust:
+			// Рекурсивный спуск.
+			if e, ok := attr.value.Any().(error); ok {
+				nerr, ok := AsType[*Error](e)
+				if ok {
+					s.feed(nerr.attrs)
+				}
+			}
 
 		case errorAttrKindLoc:
 			s.stage[0] = slog.Attr{
@@ -119,6 +130,8 @@ func newSlogFlatContextState() *slogFlatContextState {
 func (s *slogFlatContextState) feed(attrs []errorAttr) {
 	for _, attr := range attrs {
 		switch attr.kind {
+		case errorAttrKindMarker:
+			continue
 		case errorAttrKindNew:
 			s.name = "NEW: " + attr.key
 		case errorAttrKindWrap:
@@ -143,6 +156,14 @@ func (s *slogFlatContextState) feed(attrs []errorAttr) {
 				}
 			}
 			s.name = "CTX"
+		case errorAttrKindPhantomJust:
+			// Рекурсивный спуск.
+			if e, ok := attr.value.Any().(error); ok {
+				nerr, ok := AsType[*Error](e)
+				if ok {
+					s.feed(nerr.attrs)
+				}
+			}
 		case errorAttrKindLoc:
 			s.pos = append(s.pos, slog.String(s.name, attr.value.String()))
 		default:
