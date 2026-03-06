@@ -11,6 +11,7 @@ func Mark(err error, mark any) *Error {
 			value: slog.AnyValue(mark),
 			kind:  errorAttrKindMarker,
 		})
+		return e
 	}
 
 	attrs := make([]errorAttr, 0, errorContextLengthPrediction)

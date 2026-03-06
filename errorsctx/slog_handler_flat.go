@@ -52,7 +52,7 @@ func (h *SLogHandlerFlat) Handle(ctx context.Context, r slog.Record) error {
 		}
 
 		// Add error message under a key.
-		newRecord.AddAttrs(slog.String(a.Key, err.Error()))
+		newRecord.AddAttrs(slog.String(a.Key, e.Error()))
 
 		// Add context tree as @key.
 		ctx := errors.SLogFlatContext(err)

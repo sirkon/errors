@@ -18,6 +18,13 @@ func ExampleError_Error() {
 		func() error {
 			return errors.Wrap(io.EOF, "wrap")
 		}(),
+		func() error {
+			var err error
+			err = errors.Wrap(io.EOF, "wrap")
+			err = fmt.Errorf("foreign wrap: %w", err)
+			err = errors.Mark(err, new(0))
+			return err
+		}(),
 	}
 	for _, err := range errs {
 		fmt.Println(err)
@@ -26,4 +33,5 @@ func ExampleError_Error() {
 	// Output:
 	// wrap no 2: wrap: new error
 	// wrap: EOF
+	// foreign wrap: wrap: EOF
 }
