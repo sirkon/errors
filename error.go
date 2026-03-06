@@ -30,6 +30,8 @@ func (e *Error) Error() string {
 			links = append(links, attr.key)
 		case errorAttrKindOutterJust:
 			links = append(links, attr.value.Any().(error).Error())
+		case errorAttrKindPhantomJust:
+			links = append(links, attr.value.Any().(error).Error())
 		default:
 			continue
 		}
@@ -111,11 +113,15 @@ const (
 	errorAttrKindOutterWrap
 	errorAttrKindJust
 	errorAttrKindOutterJust
+	errorAttrKindPhantomJust
 	errorAttrKindLoc
 	errorAttrKindBool
 	errorAttrKindI64
 	errorAttrKindU64
 	errorAttrKindF64
 	errorAttrKindStr
+	// errorAttrKindMarker содержит специальное неотображаемое значение, с помощью которого возможна дополнительная
+	// "ориентация" ошибки под конкретные задачи.
+	errorAttrKindMarker
 	errorAttrKindAny
 )
