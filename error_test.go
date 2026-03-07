@@ -22,7 +22,7 @@ func ExampleError_Error() {
 			var err error
 			err = errors.Wrap(io.EOF, "wrap")
 			err = fmt.Errorf("foreign wrap: %w", err)
-			err = errors.Mark(err, new(0))
+			err = errors.Spec(err, new(0))
 			return err
 		}(),
 	}
