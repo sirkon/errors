@@ -59,6 +59,7 @@ func TestMain(t *testing.M) {
 }
 
 func BenchmarkErrorsTree(b *testing.B) {
+	b.ReportAllocs()
 	for b.Loop() {
 		err := errors.New("this is an error").
 			Any("bytes", []byte{1, 2, 3}).
@@ -75,6 +76,7 @@ func BenchmarkErrorsTree(b *testing.B) {
 }
 
 func BenchmarkErrorsFlat(b *testing.B) {
+	b.ReportAllocs()
 	for b.Loop() {
 		err := errors.New("this is an error").
 			Any("bytes", []byte{1, 2, 3}).
@@ -91,6 +93,7 @@ func BenchmarkErrorsFlat(b *testing.B) {
 }
 
 func BenchmarkErrorsStd(b *testing.B) {
+	b.ReportAllocs()
 	for b.Loop() {
 		err := fmt.Errorf("this is an error")
 		stdLogger.Error(
@@ -118,6 +121,7 @@ func BenchmarkErrorsStd(b *testing.B) {
 }
 
 func BenchmarkErrorsTxtContext(b *testing.B) {
+	b.ReportAllocs()
 	for b.Loop() {
 		err := fmt.Errorf("this is an error bytes[%v] text-bytes[%s]", []byte{1, 2, 3}, "Hello World!")
 		err = fmt.Errorf("check error count[%d] is-wrap-layer[%v]: %w", 333, true, err)
@@ -128,6 +132,7 @@ func BenchmarkErrorsTxtContext(b *testing.B) {
 }
 
 func BenchmarkWriteCost(b *testing.B) {
+	b.ReportAllocs()
 	line := strings.Repeat("1", 1024)
 	for b.Loop() {
 		if _, err := benchWriteFile.WriteString(line); err != nil {
@@ -138,6 +143,7 @@ func BenchmarkWriteCost(b *testing.B) {
 }
 
 func BenchmarkAssembleAndFormattingCost(b *testing.B) {
+	b.ReportAllocs()
 	for b.Loop() {
 		err := errors.New("this is an error").
 			Any("bytes", []byte{1, 2, 3}).
@@ -154,6 +160,7 @@ func BenchmarkAssembleAndFormattingCost(b *testing.B) {
 }
 
 func BenchmarkAssembleCost(b *testing.B) {
+	b.ReportAllocs()
 	for b.Loop() {
 		err := errors.New("this is an error").
 			Any("bytes", []byte{1, 2, 3}).
@@ -172,6 +179,7 @@ func BenchmarkAssembleCost(b *testing.B) {
 }
 
 func BenchmarkKeyCost(b *testing.B) {
+	b.ReportAllocs()
 	dst := make([]byte, 1024)
 	key := "6142a749-aaa2-4383-b6bd-9d0adfd9d330"
 
@@ -185,6 +193,7 @@ func BenchmarkKeyCost(b *testing.B) {
 }
 
 func BenchmarkAttrCost(b *testing.B) {
+	b.ReportAllocs()
 	dst := make([]byte, 1024)
 	key := "6142a749-aaa2-4383-b6bd-9d0adfd9d330"
 
