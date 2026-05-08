@@ -14,17 +14,28 @@ import (
 	"github.com/sirkon/errors"
 )
 
-// Маркер для принудительного включения древовидного режима
-type forceTreeMarker struct{}
+// NodeKind определяет тип конечного значения для точечной раскраски
+type NodeKind int
 
-func (forceTreeMarker) LogValue() slog.Value {
-	// Возвращаем пустую группу со специальным внутренним ключом
-	return slog.GroupValue(slog.String("__slog_force_tree__", ""))
-}
+const (
+	KindGroup NodeKind = iota
+	KindArray
+	KindString
+	KindNumber
+	KindBool
+	KindNull
+	KindLocation
+	KindErrorText
+	KindErrorNode
+	KindStackTrace
+)
 
-// ForceTree — экспортируемый атрибут для подкладывания в вызовы логирования
-func ForceTree() slog.Attr {
-	return slog.Any("", forceTreeMarker{})
+// TreeNode — единый элемент нашего сквозного промежуточного дерева
+type TreeNode struct {
+	Key      string
+	Value    string
+	Kind     NodeKind
+	Children []*TreeNode
 }
 
 var bufPool = sync.Pool{
@@ -103,265 +114,475 @@ func (h *SlogPrettyRenderer) Handle(_ context.Context, r slog.Record) error {
 	buf = append(buf, r.Message...)
 	buf = append(buf, h.color.reset...)
 
-	hasGroups := false
-	hasMultilineString := false
 	forceTree := false
+	hasMultilineString := false
+	hasInternalJSON := false // <-- Добавить флаг
 
-	// Собираем все атрибуты и на лету фильтруем наш маркер
-	allAttrs := make([]slog.Attr, 0, len(h.preAttrs)+r.NumAttrs())
+	rawAttrs := make([]slog.Attr, 0, len(h.preAttrs)+r.NumAttrs())
 
-	processAttr := func(a slog.Attr) {
+	processRaw := func(a slog.Attr) {
 		val := a.Value.Resolve()
 		if val.Kind() == slog.KindGroup {
-			groupAttrs := val.Group()
-			// Если это наш скрытый маркер — взводим флаг и дропаем его из лога
-			if len(groupAttrs) == 1 && groupAttrs[0].Key == "__slog_force_tree__" {
+			g := val.Group()
+			if len(g) == 1 && g[0].Key == "__slog_force_tree__" {
 				forceTree = true
 				return
 			}
-			hasGroups = true
 		}
-
 		if val.Kind() == slog.KindString {
 			valStr := val.String()
 			if strings.Contains(valStr, "\n") {
 				hasMultilineString = true
 			}
+			// Эвристика: Если внутри плоской строки прилетел JSON, требуем дерево
+			if len(valStr) > 1 && (valStr[0] == '{' || valStr[0] == '[') {
+				hasInternalJSON = true
+			}
 		}
-		allAttrs = append(allAttrs, a)
+		rawAttrs = append(rawAttrs, a)
 	}
 
-	// Прогоняем через фильтр накопленные и текущие атрибуты
 	for _, a := range h.preAttrs {
-		processAttr(a)
+		processRaw(a)
 	}
 	r.Attrs(func(a slog.Attr) bool {
-		processAttr(a)
+		processRaw(a)
 		return true
 	})
 
-	// Сценарий 1: Мало контекста -> Красивый раскрашенный JSON в одну строку
-	// Срабатывает ТОЛЬКО если forceTree равен false
-	if !forceTree && !hasGroups && !hasMultilineString && len(allAttrs) <= 3 {
-		if len(allAttrs) == 0 {
-			return nil
+	// Сценарий 1: Мало контекста -> Компактный однострочный JSON
+	if !forceTree && !hasMultilineString && !hasInternalJSON && len(rawAttrs) <= 3 {
+		hasGroupsOrComplex := false
+		for _, a := range rawAttrs {
+			k := a.Value.Resolve().Kind()
+			if k == slog.KindGroup || k == slog.KindAny {
+				hasGroupsOrComplex = true
+				break
+			}
 		}
 
-		// Добавляем разделительный пробел после сообщения лога
-		buf = append(buf, ' ')
-
-		// Открывающая фигурная скобка
-		buf = append(buf, h.color.stdots...)
-		buf = append(buf, '{')
-		buf = append(buf, h.color.reset...)
-
-		for i, a := range allAttrs {
-			if i > 0 {
-				// Запятая и пробел между парами ключ-значение
-				buf = append(buf, h.color.stdots...)
-				buf = append(buf, ", "...)
-				buf = append(buf, h.color.reset...)
+		if !hasGroupsOrComplex {
+			if len(rawAttrs) == 0 {
+				return nil
 			}
-
-			// Подсветка ключа в JSON
-			buf = append(buf, h.color.key...)
-			buf = append(buf, '"')
-			buf = append(buf, a.Key...)
-			buf = append(buf, '"')
+			buf = append(buf, ' ')
+			buf = append(buf, h.color.stdots...)
+			buf = append(buf, '{')
 			buf = append(buf, h.color.reset...)
 
-			// Двоеточие с пробелом
+			for i, a := range rawAttrs {
+				if i > 0 {
+					buf = append(buf, h.color.stdots...)
+					buf = append(buf, ", "...)
+					buf = append(buf, h.color.reset...)
+				}
+				buf = append(buf, h.color.key...)
+				buf = append(buf, '"')
+				buf = append(buf, a.Key...)
+				buf = append(buf, '"')
+				buf = append(buf, h.color.reset...)
+				buf = append(buf, h.color.stdots...)
+				buf = append(buf, ": "...)
+				buf = append(buf, h.color.reset...)
+
+				buf = append(buf, h.color.ctx...)
+				val := a.Value.Resolve()
+				if val.Kind() == slog.KindString {
+					buf = append(buf, '"')
+					buf = appendRawSlogValue(buf, val)
+					buf = append(buf, '"')
+				} else {
+					buf = appendRawSlogValue(buf, val)
+				}
+				buf = append(buf, h.color.reset...)
+			}
+			buf = append(buf, h.color.stdots...)
+			buf = append(buf, '}')
+			buf = append(buf, h.color.reset...)
+			return nil
+		}
+	}
+
+	// Сценарий 2: Построение Единого Промежуточного Дерева (IR) для всего контекста
+	rootNodes := make([]*TreeNode, 0, len(rawAttrs))
+	for _, a := range rawAttrs {
+		rootNodes = append(rootNodes, h.buildIRTree(a.Key, a.Value))
+	}
+
+	// Линейный рендеринг готового IR-графа
+	buf = h.renderIRTree(buf, rootNodes, []bool{}, false)
+	return nil
+}
+
+// buildIRTree — Фабрика сквозного IR-дерева с интегрированными эвристиками
+func (h *SlogPrettyRenderer) buildIRTree(key string, val slog.Value) *TreeNode {
+	resolved := val.Resolve()
+	node := &TreeNode{Key: key}
+
+	// 1. Группы slog.Group
+	if resolved.Kind() == slog.KindGroup {
+		node.Kind = KindGroup
+		for _, subAttr := range resolved.Group() {
+			node.Children = append(node.Children, h.buildIRTree(subAttr.Key, subAttr.Value))
+		}
+		return node
+	}
+
+	// 2. ЧЕСТНЫЙ ПЕРЕХВАТ ОШИБКИ БЕЗ ЭВРИСТИК
+	if resolved.Kind() == slog.KindAny {
+		if e, ok := resolved.Any().(error); ok {
+			if node.Key == "" || node.Key == "!BADKEY" {
+				node.Key = "err"
+			}
+
+			// Сам корневой узел ошибки размечаем как KindErrorNode
+			node.Kind = KindErrorNode
+
+			var err *errors.Error
+			if er, ok := e.(*errors.Error); ok {
+				err = er
+			} else {
+				err, _ = errors.AsType[*errors.Error](e)
+			}
+
+			// Текст ошибки горит красным
+			node.Children = append(node.Children, &TreeNode{Key: "@text", Value: e.Error(), Kind: KindErrorText})
+
+			// Блок контекста ошибки
+			ctxNode := &TreeNode{Key: "@context", Kind: KindErrorNode}
+
+			if err != nil {
+				// Если это наша родная ошибка sirkon/errors, раскладываем дерево
+				for _, subAttr := range errors.SLogTreeContext(err) {
+					ctxNode.Children = append(ctxNode.Children, h.buildIRTree(subAttr.Key, subAttr.Value))
+				}
+			} else {
+				// Если это чужая ошибка (foreign error), контекст пустой, но узел создаем
+				ctxNode.Value = "{}"
+				ctxNode.Kind = KindNull
+			}
+
+			node.Children = append(node.Children, ctxNode)
+			return node
+		}
+	}
+
+	// Извлекаем строковое значение для текстовых эвристик (стектрейсы, локации, JSON)
+	var rawStr string
+	switch resolved.Kind() {
+	case slog.KindString:
+		rawStr = resolved.String()
+	case slog.KindAny:
+		if s, ok := resolved.Any().(string); ok {
+			rawStr = s
+		} else if b, ok := resolved.Any().([]byte); ok {
+			rawStr = string(b)
+		}
+	}
+
+	// 2. Железобетонная эвристика: Распознаем стектрейс Go по структуре текста
+	if (key == "stacktrace" || key == "stack" || strings.Contains(rawStr, "goroutine ")) && strings.Contains(rawStr, "\n") {
+		node.Kind = KindStackTrace
+		node.Value = rawStr
+		return node
+	}
+
+	// 3. Эвристика: Перехват ошибок пакета sirkon/errors
+	if resolved.Kind() == slog.KindAny && node.Kind != KindStackTrace {
+		if e, ok := resolved.Any().(error); ok {
+			var err *errors.Error
+			if er, ok := e.(*errors.Error); ok {
+				err = er
+			} else {
+				err, _ = errors.AsType[*errors.Error](e)
+			}
+
+			if err != nil {
+				if node.Key == "" || node.Key == "!BADKEY" {
+					node.Key = "err"
+				}
+				node.Kind = KindGroup
+				node.Children = append(node.Children, &TreeNode{Key: "@text", Value: e.Error(), Kind: KindErrorText})
+
+				ctxNode := &TreeNode{Key: "@context", Kind: KindGroup}
+				for _, subAttr := range errors.SLogTreeContext(err) {
+					ctxNode.Children = append(ctxNode.Children, h.buildIRTree(subAttr.Key, subAttr.Value))
+				}
+				node.Children = append(node.Children, ctxNode)
+				return node
+			}
+		}
+	}
+
+	// 4. Эвристика: Парсинг вложенных JSON / Map структур
+	var anyObj any
+	isJSON := false
+
+	if len(rawStr) > 1 && (rawStr[0] == '{' || rawStr[0] == '[') {
+		if json.Unmarshal([]byte(rawStr), &anyObj) == nil {
+			isJSON = true
+		}
+	} else if resolved.Kind() == slog.KindAny {
+		if jsonBytes, err := json.Marshal(resolved.Any()); err == nil && len(jsonBytes) > 1 {
+			if jsonBytes[0] == '{' || jsonBytes[0] == '[' {
+				if json.Unmarshal(jsonBytes, &anyObj) == nil {
+					isJSON = true
+				}
+			}
+		}
+	}
+
+	if isJSON {
+		return h.buildIRTreeFromAny(key, anyObj)
+	}
+
+	// 5. Дефолтная обработка примитивов верхнего уровня slog
+	if key == "@location" || strings.Contains(rawStr, ".go:") {
+		node.Kind = KindLocation
+		node.Value = rawStr
+		return node
+	}
+
+	switch resolved.Kind() {
+	case slog.KindBool:
+		node.Kind = KindBool
+	case slog.KindInt64, slog.KindUint64, slog.KindFloat64, slog.KindDuration:
+		node.Kind = KindNumber
+	default:
+		node.Kind = KindString
+	}
+
+	buf := make([]byte, 0, 64)
+	buf = appendRawSlogValue(buf, resolved)
+	node.Value = string(buf)
+	return node
+}
+
+// buildIRTreeFromAny рекурсивно раскладывает any-объекты (мапы/слайсы из JSON) в IR-узлы
+func (h *SlogPrettyRenderer) buildIRTreeFromAny(key string, obj any) *TreeNode {
+	node := &TreeNode{Key: key}
+	if obj == nil {
+		node.Kind = KindNull
+		node.Value = "null"
+		return node
+	}
+
+	switch v := obj.(type) {
+	case map[string]any:
+		if len(v) == 0 {
+			node.Kind = KindNull
+			node.Value = "{}"
+			return node
+		}
+		node.Kind = KindGroup
+		keys := make([]string, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			node.Children = append(node.Children, h.buildIRTreeFromAny(k, v[k]))
+		}
+
+	case []any:
+		if len(v) == 0 {
+			node.Kind = KindNull
+			node.Value = "[]"
+			return node
+		}
+		node.Kind = KindArray
+		for i, val := range v {
+			node.Children = append(node.Children, h.buildIRTreeFromAny("["+strconv.Itoa(i)+"]", val))
+		}
+
+	case string:
+		if strings.Contains(v, ".go:") || key == "@location" {
+			node.Kind = KindLocation
+		} else {
+			node.Kind = KindString
+		}
+		node.Value = v
+
+	case bool:
+		node.Kind = KindBool
+		node.Value = strconv.FormatBool(v)
+
+	case float64:
+		node.Kind = KindNumber
+		node.Value = strconv.FormatFloat(v, 'g', -1, 64)
+
+	default:
+		node.Kind = KindNumber
+		node.Value = fmt.Sprint(v)
+	}
+	return node
+}
+func (h *SlogPrettyRenderer) renderIRTree(buf []byte, nodes []*TreeNode, states []bool, inErrorZone bool) []byte {
+	count := len(nodes)
+	for i, node := range nodes {
+		isLast := i == count-1
+
+		if node.Kind == KindStackTrace {
+			buf = h.appendFormattedStackTrace(buf, node.Key, node.Value, states, isLast)
+			continue
+		}
+
+		buf = append(buf, '\n')
+		buf = append(buf, h.color.link...)
+		for _, isParentLast := range states {
+			if isParentLast {
+				buf = append(buf, "   "...)
+			} else {
+				buf = append(buf, "│  "...)
+			}
+		}
+		if isLast {
+			buf = append(buf, "└── "...)
+		} else {
+			buf = append(buf, "├── "...)
+		}
+		buf = append(buf, h.color.reset...)
+
+		// 1. Покраска ключа на основе точного семантического типа
+		switch node.Kind {
+		case KindErrorNode, KindErrorText:
+			buf = append(buf, h.color.errkey...) // Инфраструктура ошибок (err, @text, @context)
+		case KindLocation:
+			buf = append(buf, h.color.loc...)
+		default:
+			buf = append(buf, h.color.key...) // Обычные пользовательские ключи
+		}
+		buf = append(buf, node.Key...)
+		buf = append(buf, h.color.reset...)
+
+		isGroupType := node.Kind == KindGroup || node.Kind == KindArray || node.Kind == KindErrorNode
+		if isGroupType {
+			buf = h.renderIRTree(buf, node.Children, append(states, isLast), inErrorZone)
+		} else {
 			buf = append(buf, h.color.stdots...)
 			buf = append(buf, ": "...)
 			buf = append(buf, h.color.reset...)
 
-			// Подсветка значения в JSON
-			buf = append(buf, h.color.ctx...)
-			if a.Value.Kind() == slog.KindString {
-				buf = append(buf, '"')
-				buf = appendSlogValue(buf, a.Value)
-				buf = append(buf, '"')
-			} else {
-				buf = appendSlogValue(buf, a.Value)
+			// 2. Покраска значения
+			switch node.Kind {
+			case KindLocation:
+				buf = append(buf, h.color.loc...)
+				buf = append(buf, node.Value...)
+			case KindErrorText:
+				buf = append(buf, h.color.error...) // Само тело ошибки горит красным
+				buf = append(buf, node.Value...)
+			case KindString:
+				buf = append(buf, h.color.ctx...)
+				if !strings.HasPrefix(node.Key, "[") {
+					buf = append(buf, '"')
+					buf = append(buf, node.Value...)
+					buf = append(buf, '"')
+				} else {
+					buf = append(buf, node.Value...)
+				}
+			case KindNull:
+				buf = append(buf, h.color.trace...)
+				buf = append(buf, node.Value...)
+			case KindBool, KindNumber:
+				buf = append(buf, h.color.debug...)
+				buf = append(buf, node.Value...)
+			default:
+				buf = append(buf, h.color.ctx...)
+				buf = append(buf, node.Value...)
 			}
 			buf = append(buf, h.color.reset...)
 		}
-
-		// Закрывающая фигурная скобка
-		buf = append(buf, h.color.stdots...)
-		buf = append(buf, '}')
-		buf = append(buf, h.color.reset...)
-
-		return nil
-	}
-
-	// Сценарий 2: Вывод честного дерева (если forceTree=true, много полей или есть группы/стек)
-	buf = h.printTreeList(buf, allAttrs, []bool{}, false)
-	return nil
-}
-
-// transformAttr перехватывает ошибки sirkon/errors и раскладывает их в типизированные slog-группы
-func (h *SlogPrettyRenderer) transformAttr(a slog.Attr) slog.Attr {
-	e, ok := a.Value.Any().(error)
-	if !ok {
-		return a
-	}
-	err, ok := e.(*errors.Error)
-	if !ok {
-		err, ok = errors.AsType[*errors.Error](e)
-		if !ok {
-			return a
-		}
-	}
-
-	if a.Key == "" || a.Key == "!BADKEY" {
-		a.Key = "err"
-	}
-
-	return slog.GroupAttrs(
-		a.Key,
-		slog.String("@text", e.Error()),
-		slog.GroupAttrs("@context", errors.SLogTreeContext(err)...),
-	)
-}
-
-func (h *SlogPrettyRenderer) printTreeList(buf []byte, attrs []slog.Attr, parentStates []bool, inErrorZone bool) []byte {
-	count := len(attrs)
-	for i, a := range attrs {
-		isLast := i == count-1
-		buf = h.printTreeAttr(buf, a, isLast, parentStates, inErrorZone)
 	}
 	return buf
 }
 
-func (h *SlogPrettyRenderer) printTreeAttr(
-	buf []byte,
-	a slog.Attr,
-	isLast bool,
-	parentStates []bool,
-	inErrorZone bool,
-) []byte {
+func (h *SlogPrettyRenderer) appendFormattedStackTrace(buf []byte, key, stackStr string, states []bool, isCurrentLast bool) []byte {
 	buf = append(buf, '\n')
-
-	// Отрисовка направляющих линий дерева (палочек)
 	buf = append(buf, h.color.link...)
-	for _, isParentLast := range parentStates {
+	for _, isParentLast := range states {
 		if isParentLast {
 			buf = append(buf, "   "...)
 		} else {
 			buf = append(buf, "│  "...)
 		}
 	}
-
-	if isLast {
+	if isCurrentLast {
 		buf = append(buf, "└── "...)
 	} else {
 		buf = append(buf, "├── "...)
 	}
 	buf = append(buf, h.color.reset...)
 
-	isGroup := a.Value.Kind() == slog.KindGroup
-	currentElementIsErrorNode := keyIsErrorContext(a.Key, isGroup)
-	isCurrentErrorZone := inErrorZone || currentElementIsErrorNode
-
-	// Перехват стектрейса (по ключу stacktrace или stack)
-	if (a.Key == "stacktrace" || a.Key == "stack") && a.Value.Kind() == slog.KindString {
-		buf = h.appendFormattedStackTrace(buf, a.Key, a.Value.String(), parentStates, isLast)
-		return buf
-	}
-
-	// 1. Подсветка ключа атрибута
-	buf = append(buf, h.selectKeyColor(a.Key, isGroup)...)
-	buf = append(buf, a.Key...)
+	buf = append(buf, h.color.errkey...)
+	buf = append(buf, key...)
+	buf = append(buf, h.color.reset...)
+	buf = append(buf, h.color.stdots...)
+	buf = append(buf, ": "...)
 	buf = append(buf, h.color.reset...)
 
-	if isGroup {
-		nextStates := append(parentStates, isLast)
-		buf = h.printTreeList(buf, a.Value.Group(), nextStates, isCurrentErrorZone)
-	} else {
-		// Перехват и разбор сложных структур данных (JSON / Мапы) до печати двоеточия
+	fullStates := append(states, isCurrentLast)
+	lines := strings.Split(stackStr, "\n")
 
-		// Сценарий А: Передали сырую JSON-строку
-		if a.Value.Kind() == slog.KindString {
-			valStr := a.Value.String()
-			if len(valStr) > 0 && (valStr[0] == '{' || valStr[0] == '[') {
-				var anyObj any
-				if json.Unmarshal([]byte(valStr), &anyObj) == nil {
-					buf = append(buf, h.color.stdots...)
-					buf = append(buf, ':')
-					buf = append(buf, h.color.reset...)
-					buf = h.appendFormattedAny(buf, anyObj, parentStates, isLast)
-					return buf
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "goroutine ") {
+			buf = h.appendStackLineIndent(buf, fullStates)
+			buf = append(buf, h.color.panic...)
+			buf = append(buf, ' ')
+			buf = append(buf, line...)
+			buf = append(buf, ' ')
+			buf = append(buf, h.color.reset...)
+			continue
+		}
+		if i+1 < len(lines) {
+			nextLine := strings.TrimSpace(lines[i+1])
+			if strings.Contains(nextLine, ".go:") || strings.Contains(nextLine, "s:") {
+				funcName := line
+				locInfo := nextLine
+				if idx := strings.LastIndex(locInfo, " "); idx != -1 {
+					locInfo = locInfo[:idx]
 				}
+				buf = h.appendStackLineIndent(buf, fullStates)
+				buf = append(buf, h.color.key...)
+				buf = append(buf, funcName...)
+				buf = append(buf, h.color.reset...)
+				buf = append(buf, h.color.stdots...)
+				buf = append(buf, " -> "...)
+				buf = append(buf, h.color.reset...)
+				buf = append(buf, h.color.loc...)
+				buf = append(buf, locInfo...)
+				buf = append(buf, h.color.reset...)
+				i++
+				continue
 			}
 		}
-
-		// Сценарий Б: Передали map[string]any или структуру через slog.Any
-		if a.Value.Kind() == slog.KindAny {
-			if jsonBytes, err := json.Marshal(a.Value.Any()); err == nil && len(jsonBytes) > 0 {
-				if jsonBytes[0] == '{' || jsonBytes[0] == '[' {
-					var anyObj any
-					if json.Unmarshal(jsonBytes, &anyObj) == nil {
-						buf = append(buf, h.color.stdots...)
-						buf = append(buf, ':')
-						buf = append(buf, h.color.reset...)
-						buf = h.appendFormattedAny(buf, anyObj, parentStates, isLast)
-						return buf
-					}
-				}
-			}
-		}
-
-		// Дефолтный вывод для обычных примитивных значений
-		buf = append(buf, h.color.stdots...)
-		buf = append(buf, ": "...)
-		buf = append(buf, h.color.reset...)
-
-		switch a.Key {
-		case "@location":
-			buf = append(buf, h.color.loc...)
-			buf = appendSlogValue(buf, a.Value)
-		case "@text":
-			buf = append(buf, h.color.error...)
-			buf = appendSlogValue(buf, a.Value)
-		default:
-			buf = append(buf, h.color.ctx...)
-			buf = appendSlogValue(buf, a.Value)
-		}
+		buf = h.appendStackLineIndent(buf, fullStates)
+		buf = append(buf, h.color.sttext...)
+		buf = append(buf, line...)
 		buf = append(buf, h.color.reset...)
 	}
 	return buf
 }
 
-func (h *SlogPrettyRenderer) selectKeyColor(key string, isGroup bool) string {
-	if key == "@location" {
-		return h.color.loc
+func (h *SlogPrettyRenderer) appendStackLineIndent(buf []byte, fullStates []bool) []byte {
+	buf = append(buf, '\n')
+	buf = append(buf, h.color.link...)
+	for _, isLast := range fullStates {
+		if isLast {
+			buf = append(buf, "   "...)
+		} else {
+			buf = append(buf, "│  "...)
+		}
 	}
-	if key == "@text" {
-		return h.color.errkey // Ключ для текста ошибки выделен
-	}
-
-	// Для @context, NEW:, WRAP:, CTX и err используем стандартный key,
-	// чтобы они не перегружали терминал красным цветом
-	return h.color.key
+	buf = append(buf, "   "...)
+	buf = append(buf, h.color.reset...)
+	return buf
 }
 
-// Точное определение инфраструктурных ключей пакета ошибок
-func keyIsErrorContext(key string, isGroup bool) bool {
-	if key == "err" || key == "@text" || key == "@context" || strings.HasPrefix(key, "err-") {
-		return true
-	}
-	// Если это группа и она завершается двоеточием (NEW:, WRAP:), это слой вашего sirkon/errors
-	if isGroup && strings.HasSuffix(key, ":") {
-		return true
-	}
-	if key == "CTX" {
-		return true
-	}
-	return false
-}
-
-func appendSlogValue(buf []byte, v slog.Value) []byte {
+func appendRawSlogValue(buf []byte, v slog.Value) []byte {
 	switch v.Kind() {
 	case slog.KindString:
 		return append(buf, v.String()...)
@@ -378,287 +599,24 @@ func appendSlogValue(buf []byte, v slog.Value) []byte {
 	case slog.KindDuration:
 		return append(buf, v.Duration().String()...)
 	default:
-		b, err := json.Marshal(v.Any())
-		if err != nil {
-			return append(buf, err.Error()...)
-		}
-		return append(buf, b...)
+		return append(buf, fmt.Sprint(v.Any())...)
 	}
-}
-
-func (h *SlogPrettyRenderer) appendFormattedStackTrace(buf []byte, key, stackStr string, parentStates []bool, isCurrentLast bool) []byte {
-	// Подсвечиваем заголовок stacktrace
-	buf = append(buf, h.color.errkey...)
-	buf = append(buf, key...)
-	buf = append(buf, h.color.reset...)
-	buf = append(buf, h.color.stdots...)
-	buf = append(buf, ": "...)
-	buf = append(buf, h.color.reset...)
-
-	// Создаем полный стек состояний, включая состояние текущего узла stack
-	fullStates := append(parentStates, isCurrentLast)
-
-	lines := strings.Split(stackStr, "\n")
-
-	// Перебираем строки стека парами: Функция -> Локация
-	for i := 0; i < len(lines); i++ {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-
-		// Вывод информации о горутине
-		if strings.HasPrefix(line, "goroutine ") {
-			buf = h.appendStackLineIndent(buf, fullStates)
-			buf = append(buf, h.color.panic...)
-			buf = append(buf, ' ')
-			buf = append(buf, line...)
-			buf = append(buf, ' ')
-			buf = append(buf, h.color.reset...)
-			continue
-		}
-
-		// Обработка пары Функция + Файл
-		if i+1 < len(lines) {
-			nextLine := strings.TrimSpace(lines[i+1])
-			if strings.Contains(nextLine, ".go:") || strings.Contains(nextLine, "s:") {
-				funcName := line
-				locInfo := nextLine
-
-				if idx := strings.LastIndex(locInfo, " "); idx != -1 {
-					locInfo = locInfo[:idx]
-				}
-
-				// Печать кадра стека
-				buf = h.appendStackLineIndent(buf, fullStates)
-
-				// Функция
-				buf = append(buf, h.color.key...)
-				buf = append(buf, funcName...)
-				buf = append(buf, h.color.reset...)
-
-				buf = append(buf, h.color.stdots...)
-				buf = append(buf, " -> "...)
-				buf = append(buf, h.color.reset...)
-
-				// Путь
-				buf = append(buf, h.color.loc...)
-				buf = append(buf, locInfo...)
-				buf = append(buf, h.color.reset...)
-
-				i++
-				continue
-			}
-		}
-
-		// Фолбек
-		buf = h.appendStackLineIndent(buf, fullStates)
-		buf = append(buf, h.color.sttext...)
-		buf = append(buf, line...)
-		buf = append(buf, h.color.reset...)
-	}
-
-	return buf
-}
-
-// Теперь этот метод опирается на fullStates, где последний элемент — состояние самого узла stack
-func (h *SlogPrettyRenderer) appendStackLineIndent(buf []byte, fullStates []bool) []byte {
-	buf = append(buf, '\n')
-	buf = append(buf, h.color.link...)
-
-	// Отрисовываем все уровни отступов, включая уровень текущего стектрейса
-	for _, isLast := range fullStates {
-		if isLast {
-			buf = append(buf, "   "...) // Если уровень закрылся, линии нет
-		} else {
-			buf = append(buf, "│  "...) // Если уровень продолжается, рисуем линию
-		}
-	}
-
-	// Добавляем небольшой фиксированный сдвиг вправо для красоты текста
-	buf = append(buf, "   "...)
-	buf = append(buf, h.color.reset...)
-	return buf
-}
-
-// Вспомогательный хелпер для сохранения вертикальных линий дерева внутри стектрейса
-func (h *SlogPrettyRenderer) appendTreeIndent(buf []byte, parentStates []bool, isLast bool) []byte {
-	buf = append(buf, '\n')
-	buf = append(buf, h.color.link...)
-	for _, isParentLast := range parentStates {
-		if isParentLast {
-			buf = append(buf, "   "...)
-		} else {
-			buf = append(buf, "│  "...)
-		}
-	}
-	// Внутри стектрейса все дочерние элементы идут как продолжающиеся ветки родительского узла ошибки
-	buf = append(buf, "│  ├── "...)
-	buf = append(buf, h.color.reset...)
-	return buf
-}
-
-func (h *SlogPrettyRenderer) appendJSONTreeIndent(buf []byte, states []bool, isLast bool) []byte {
-	buf = append(buf, '\n')
-	buf = append(buf, h.color.link...)
-
-	// Отрисовываем ВСЕ родительские уровни палочек из стека.
-	// Если узел "obj:" шел под └──, то isCurrentLast равен true,
-	// и этот цикл автоматически напечатает на его уровне пустые три пробела "   ",
-	// идеально убрав висящую палочку под "obj:".
-	for _, isParentLast := range states {
-		if isParentLast {
-			buf = append(buf, "   "...)
-		} else {
-			buf = append(buf, "│  "...)
-		}
-	}
-
-	// Рисуем маркер текущего элемента JSON
-	if isLast {
-		buf = append(buf, "└── "...)
-	} else {
-		buf = append(buf, "├── "...)
-	}
-	buf = append(buf, h.color.reset...)
-	return buf
-}
-
-// Форматирование примитивов из json.Token напрямую в текстовый буфер
-func appendJSONTokenValue(buf []byte, t json.Token) []byte {
-	switch v := t.(type) {
-	case string:
-		buf = append(buf, '"')
-		buf = append(buf, v...)
-		buf = append(buf, '"')
-	case float64:
-		buf = strconv.AppendFloat(buf, v, 'g', -1, 64)
-	case bool:
-		buf = strconv.AppendBool(buf, v)
-	case nil:
-		buf = append(buf, "null"...)
-	}
-	return buf
-}
-
-func (h *SlogPrettyRenderer) appendFormattedAny(buf []byte, obj any, parentStates []bool, isCurrentLast bool) []byte {
-	// Фиксируем состояние текущего узла (например, obj:) в стеке родителей
-	currentStates := append(parentStates, isCurrentLast)
-	return h.printAnyTree(buf, obj, currentStates)
-}
-
-func (h *SlogPrettyRenderer) printAnyTree(buf []byte, obj any, states []bool) []byte {
-	switch v := obj.(type) {
-	case map[string]any:
-		// Для консистентности вывода сортируем ключи мапы по алфавиту
-		keys := make([]string, 0, len(v))
-		for k := range v {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-
-		count := len(keys)
-		for i, k := range keys {
-			isLastInJSON := i == count-1
-			val := v[k]
-
-			// Печатаем ключ текущего уровня
-			buf = h.appendJSONTreeIndent(buf, states, isLastInJSON)
-			buf = append(buf, h.color.key...)
-			buf = append(buf, k...)
-			buf = append(buf, h.color.reset...)
-			buf = append(buf, h.color.stdots...)
-			buf = append(buf, ": "...)
-			buf = append(buf, h.color.reset...)
-
-			// Уходим в рекурсию. Если значение — это вложенная мапа или слайс,
-			// они должны знать, закрылась ли текущая ветка (isLastInJSON)
-			if isComplexType(val) {
-				buf = h.printAnyTree(buf, val, append(states, isLastInJSON))
-			} else {
-				// Если это примитив, печатаем его значение на этой же строке
-				buf = append(buf, h.color.ctx...)
-				buf = appendPrimitiveValue(buf, val)
-				buf = append(buf, h.color.reset...)
-			}
-		}
-
-	case []any:
-		count := len(v)
-		for i, val := range v {
-			isLastInJSON := i == count-1
-
-			// Печатаем индекс массива [0], [1]
-			buf = h.appendJSONTreeIndent(buf, states, isLastInJSON)
-			buf = append(buf, h.color.key...)
-			buf = append(buf, '[')
-			buf = strconv.AppendInt(buf, int64(i), 10)
-			buf = append(buf, ']')
-			buf = append(buf, h.color.reset...)
-			buf = append(buf, h.color.stdots...)
-			buf = append(buf, ": "...)
-			buf = append(buf, h.color.reset...)
-
-			if isComplexType(val) {
-				buf = h.printAnyTree(buf, val, append(states, isLastInJSON))
-			} else {
-				buf = append(buf, h.color.ctx...)
-				buf = appendPrimitiveValue(buf, val)
-				buf = append(buf, h.color.reset...)
-			}
-		}
-	}
-	return buf
-}
-
-// Проверка: нужно ли переносить элемент на новую строку дерева
-func isComplexType(obj any) bool {
-	if obj == nil {
-		return false
-	}
-	switch obj.(type) {
-	case map[string]any, []any:
-		return true
-	default:
-		return false
-	}
-}
-
-// Форматирование примитивов после Unmarshal
-func appendPrimitiveValue(buf []byte, val any) []byte {
-	if val == nil {
-		return append(buf, "null"...)
-	}
-	switch v := val.(type) {
-	case string:
-		buf = append(buf, '"')
-		buf = append(buf, v...)
-		buf = append(buf, '"')
-	case float64:
-		buf = strconv.AppendFloat(buf, v, 'g', -1, 64)
-	case bool:
-		buf = strconv.AppendBool(buf, v)
-	default:
-		buf = append(buf, fmt.Sprint(v)...)
-	}
-	return buf
 }
 
 func (h *SlogPrettyRenderer) WithAttrs(attrs []slog.Attr) slog.Handler {
-	// Предобработка атрибутов при ветвлении логгера через .With()
-	transformed := make([]slog.Attr, len(attrs))
-	for i, a := range attrs {
-		transformed[i] = h.transformAttr(a)
-	}
 	return &SlogPrettyRenderer{
 		opts:     h.opts,
 		dst:      h.dst,
 		color:    h.color,
-		preAttrs: append(append([]slog.Attr{}, h.preAttrs...), transformed...),
+		preAttrs: append(append([]slog.Attr{}, h.preAttrs...), attrs...),
 	}
 }
 
-func (h *SlogPrettyRenderer) WithGroup(name string) slog.Handler {
-	// Метод WithGroup можно оставить пустым, если структура плоская на верхнем уровне
-	return h
+func (h *SlogPrettyRenderer) WithGroup(name string) slog.Handler { return h }
+
+type forceTreeMarker struct{}
+
+func (forceTreeMarker) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("__slog_force_tree__", ""))
 }
+func ForceTree() slog.Attr { return slog.Any("", forceTreeMarker{}) }
