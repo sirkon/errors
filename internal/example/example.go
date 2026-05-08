@@ -49,6 +49,20 @@ func main() {
 		slog.String("key", "value"),
 	)
 	logger.Info("simple stack", slog.String("stack", string(debug.Stack())))
+	logger.Info(
+		"with internal json",
+		slog.Int("k", 1),
+		slog.Int("k", 1),
+		slog.Int("k", 1),
+		slog.Int("k", 1),
+		slog.Any("obj", map[string]any{
+			"foo": "bar",
+			"data": map[string]int{
+				"k":  1,
+				"k2": 2,
+			},
+		}),
+	)
 
 	logger = slog.New(errorsctx.NewSLogHandlerFlat(
 		slog.NewJSONHandler(&fancyJSONWriter{}, &slog.HandlerOptions{}),
