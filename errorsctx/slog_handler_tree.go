@@ -58,12 +58,12 @@ func (h *SLogHandlerTree) Handle(ctx context.Context, r slog.Record) error {
 			a.Key = "err"
 		}
 
-		// Add error message under a key.
-		newRecord.AddAttrs(slog.String(a.Key, e.Error()))
-
-		// Add context tree as @key.
-		treeContext := errors.SLogTreeContext(err)
-		newRecord.AddAttrs(slog.GroupAttrs("@"+a.Key, treeContext...))
+		// Add error as err-key.@text and err-key.@context.
+		newRecord.AddAttrs(slog.GroupAttrs(
+			a.Key,
+			slog.String("@text", e.Error()),
+			slog.GroupAttrs("@context", errors.SLogTreeContext(err)...),
+		))
 		return true
 
 	})

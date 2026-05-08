@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"runtime/debug"
 
 	"github.com/sirkon/errors"
 	"github.com/sirkon/errors/errorsctx"
@@ -24,15 +25,30 @@ func main() {
 		F64("pi", math.Pi).
 		F64("e", math.E)
 
-	logger := slog.New(errorsctx.NewSLogHandlerTree(
-		slog.NewJSONHandler(&fancyJSONWriter{}, &slog.HandlerOptions{}),
-	))
+	logger := slog.New(
+		errorsctx.NewSlogPrettyRenderer(
+			os.Stdout,
+			&slog.HandlerOptions{
+				Level: slog.LevelDebug,
+			},
+			false,
+		),
+	)
 
 	logger.Error("log error with tree structured context", err)
 	logger.Error("log marked error with tree", errors.Spec(err, new(0)))
 	logger.Error("log marked foreign error with tree beneath",
 		errors.Spec(fmt.Errorf("foreign wrap: %w", err), new(0)),
 	)
+	logger.Info("simple info")
+	logger.Info("simple info with ctx2", slog.Int("count", 42), slog.String("key", "value"))
+	logger.Info("simple info with ctx4",
+		slog.Int("count", 42),
+		slog.String("key", "value"),
+		slog.String("key", "value"),
+		slog.String("key", "value"),
+	)
+	logger.Info("simple stack", slog.String("stack", string(debug.Stack())))
 
 	logger = slog.New(errorsctx.NewSLogHandlerFlat(
 		slog.NewJSONHandler(&fancyJSONWriter{}, &slog.HandlerOptions{}),
