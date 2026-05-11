@@ -38,7 +38,7 @@ func newPrettyWriterColorProfileDark() *prettyWriterColorProfile {
 
 		// КОРРЕКЦИЯ: Поднимаем яркость палочек и двоеточий до читаемого темно-серого (240)
 		link:   "\x1b[38;5;240m",
-		stdots: "\x1b[38;5;240m",
+		stdots: "\x1b[38;5;246m",
 
 		sttext:   "\x1b[38;5;245m",
 		key:      "\x1b[38;5;109m",
@@ -64,9 +64,8 @@ func newPrettyWriterColorProfileLight() *prettyWriterColorProfile {
 		loc:    "\x1b[38;5;240m",
 
 		// КОРРЕКЦИЯ: Для светлой темы делаем разделители более темными и контрастными
-		link:   "\x1b[38;5;244m",
-		stdots: "\x1b[38;5;244m",
-
+		link:     "\x1b[38;5;244m",
+		stdots:   "\x1b[38;5;237m",
 		sttext:   "\x1b[38;5;240m",
 		key:      "\x1b[38;5;31m",
 		errkey:   "\x1b[38;5;203m",

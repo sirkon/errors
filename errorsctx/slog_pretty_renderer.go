@@ -1,12 +1,12 @@
 package errorsctx
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -318,9 +318,11 @@ func (h *SlogPrettyRenderer) buildIRTree(key string, val slog.Value) *TreeNode {
 	var anyObj any
 	isJSON := false
 
+	var jsonData []byte
 	if len(rawStr) > 1 && (rawStr[0] == '{' || rawStr[0] == '[') {
 		if json.Unmarshal([]byte(rawStr), &anyObj) == nil {
 			isJSON = true
+			jsonData = []byte(rawStr)
 		}
 	} else if resolved.Kind() == slog.KindAny {
 		if jsonBytes, err := json.Marshal(resolved.Any()); err == nil && len(jsonBytes) > 1 {
@@ -329,11 +331,12 @@ func (h *SlogPrettyRenderer) buildIRTree(key string, val slog.Value) *TreeNode {
 					isJSON = true
 				}
 			}
+			jsonData = jsonBytes
 		}
 	}
 
 	if isJSON {
-		return h.buildIRTreeFromAny(key, anyObj)
+		return h.buildIRTreeFromJSONBytes(key, jsonData)
 	}
 
 	// 5. Дефолтная обработка примитивов верхнего уровня slog
@@ -358,65 +361,65 @@ func (h *SlogPrettyRenderer) buildIRTree(key string, val slog.Value) *TreeNode {
 	return node
 }
 
-// buildIRTreeFromAny рекурсивно раскладывает any-объекты (мапы/слайсы из JSON) в IR-узлы
-func (h *SlogPrettyRenderer) buildIRTreeFromAny(key string, obj any) *TreeNode {
-	node := &TreeNode{Key: key}
-	if obj == nil {
-		node.Kind = KindNull
-		node.Value = "null"
+func (h *SlogPrettyRenderer) buildIRTreeFromJSONBytes(key string, data []byte) *TreeNode {
+	dec := json.NewDecoder(bytes.NewReader(data))
+
+	// Передаем управление рекурсивному токен-парсеру
+	return h.parseJSONToken(key, dec)
+}
+
+func (h *SlogPrettyRenderer) parseJSONToken(key string, dec *json.Decoder) *TreeNode {
+	t, err := dec.Token()
+	if err != nil {
+		return &TreeNode{Key: key, Kind: KindNull, Value: "null"}
+	}
+
+	delim, ok := t.(json.Delim)
+	if !ok {
+		// Это примитив (string, number, bool, null)
+		node := &TreeNode{Key: key}
+		switch v := t.(type) {
+		case bool:
+			node.Kind = KindBool
+			node.Value = strconv.FormatBool(v)
+		case float64:
+			node.Kind = KindNumber
+			node.Value = strconv.FormatFloat(v, 'g', -1, 64)
+		case string:
+			node.Kind = KindString
+			node.Value = v
+		default:
+			node.Kind = KindNull
+			node.Value = "null"
+		}
 		return node
 	}
 
-	switch v := obj.(type) {
-	case map[string]any:
-		if len(v) == 0 {
-			node.Kind = KindNull
-			node.Value = "{}"
-			return node
-		}
+	node := &TreeNode{Key: key}
+	switch delim {
+	case '{':
 		node.Kind = KindGroup
-		keys := make([]string, 0, len(v))
-		for k := range v {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			node.Children = append(node.Children, h.buildIRTreeFromAny(k, v[k]))
-		}
+		for dec.More() {
+			// Читаем ключ объекта — json.Decoder гарантирует исходный порядок!
+			kToken, _ := dec.Token()
+			k := kToken.(string)
 
-	case []any:
-		if len(v) == 0 {
-			node.Kind = KindNull
-			node.Value = "[]"
-			return node
+			// Рекурсивно парсим значение для этого ключа
+			node.Children = append(node.Children, h.parseJSONToken(k, dec))
 		}
+		dec.Token() // Закрываем '}'
+	case '[':
 		node.Kind = KindArray
-		for i, val := range v {
-			node.Children = append(node.Children, h.buildIRTreeFromAny("["+strconv.Itoa(i)+"]", val))
+		i := 0
+		for dec.More() {
+			node.Children = append(node.Children, h.parseJSONToken("["+strconv.Itoa(i)+"]", dec))
+			i++
 		}
-
-	case string:
-		if strings.Contains(v, ".go:") || key == "@location" {
-			node.Kind = KindLocation
-		} else {
-			node.Kind = KindString
-		}
-		node.Value = v
-
-	case bool:
-		node.Kind = KindBool
-		node.Value = strconv.FormatBool(v)
-
-	case float64:
-		node.Kind = KindNumber
-		node.Value = strconv.FormatFloat(v, 'g', -1, 64)
-
-	default:
-		node.Kind = KindNumber
-		node.Value = fmt.Sprint(v)
+		dec.Token() // Закрываем ']'
 	}
 	return node
 }
+
 func (h *SlogPrettyRenderer) renderIRTree(buf []byte, nodes []*TreeNode, states []bool, inErrorZone bool) []byte {
 	count := len(nodes)
 	for i, node := range nodes {
