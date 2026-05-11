@@ -3,6 +3,8 @@ package errorsctx
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/sirkon/errors"
 )
@@ -21,6 +24,7 @@ const (
 	KindGroup NodeKind = iota
 	KindArray
 	KindString
+	KindInlineArray // Для компактного вывода []byte в одну строку
 	KindNumber
 	KindBool
 	KindNull
@@ -32,10 +36,12 @@ const (
 
 // TreeNode — единый элемент нашего сквозного промежуточного дерева
 type TreeNode struct {
-	Key      string
-	Value    string
-	Kind     NodeKind
-	Children []*TreeNode
+	Key        string
+	Value      string
+	Kind       NodeKind
+	Children   []*TreeNode
+	RawDisplay bool
+	IsHex      bool
 }
 
 var bufPool = sync.Pool{
@@ -50,9 +56,15 @@ type SlogPrettyRenderer struct {
 	preAttrs []slog.Attr
 	dst      io.Writer
 	color    *prettyWriterColorProfile
+	hexLimit int
 }
 
-func NewSlogPrettyRenderer(dst io.Writer, opts *slog.HandlerOptions, isDark bool) *SlogPrettyRenderer {
+// NewSlogPrettyRenderer creates pretty output slog.Handler.
+//
+//   - isDark applies respective color profile
+//   - hexLimit truncates binary data longer than the limit value. Here -1 disables this functionality and 0 is
+//     interpreted as 32.
+func NewSlogPrettyRenderer(dst io.Writer, opts *slog.HandlerOptions, isDark bool, hexLimit int) *SlogPrettyRenderer {
 	if opts == nil {
 		opts = &slog.HandlerOptions{}
 	}
@@ -62,10 +74,14 @@ func NewSlogPrettyRenderer(dst io.Writer, opts *slog.HandlerOptions, isDark bool
 	} else {
 		profile = newPrettyWriterColorProfileLight()
 	}
+	if hexLimit == 0 {
+		hexLimit = 32
+	}
 	return &SlogPrettyRenderer{
-		opts:  *opts,
-		dst:   dst,
-		color: profile,
+		opts:     *opts,
+		dst:      dst,
+		color:    profile,
+		hexLimit: hexLimit,
 	}
 }
 
@@ -363,6 +379,7 @@ func (h *SlogPrettyRenderer) buildIRTree(key string, val slog.Value) *TreeNode {
 
 func (h *SlogPrettyRenderer) buildIRTreeFromJSONBytes(key string, data []byte) *TreeNode {
 	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
 
 	// Передаем управление рекурсивному токен-парсеру
 	return h.parseJSONToken(key, dec)
@@ -382,12 +399,61 @@ func (h *SlogPrettyRenderer) parseJSONToken(key string, dec *json.Decoder) *Tree
 		case bool:
 			node.Kind = KindBool
 			node.Value = strconv.FormatBool(v)
-		case float64:
+		case json.Number: // <-- Заменяем старый case float64
 			node.Kind = KindNumber
-			node.Value = strconv.FormatFloat(v, 'g', -1, 64)
+			valStr := v.String()
+
+			// Эвристика: если в строке числа есть точка или экспонента 'e'/'E', это float
+			if strings.ContainsAny(valStr, ".eE") {
+				if f, err := v.Float64(); err == nil {
+					node.Value = strconv.FormatFloat(f, 'g', -1, 64)
+				} else {
+					node.Value = valStr
+				}
+			} else {
+				// В противном случае парсим как чистый int64/uint64
+				if i, err := v.Int64(); err == nil {
+					node.Value = strconv.FormatInt(i, 10)
+				} else {
+					node.Value = valStr // fallback на сырую строку, если число гигантское
+				}
+			}
 		case string:
-			node.Kind = KindString
-			node.Value = v
+			// Пытаемся раскрыть Base64
+			if decoded, ok := h.tryDecodeBase64(v); ok {
+				switch res := decoded.(type) {
+				case string:
+					// Успешно декодировали в Unicode текст
+					node.Kind = KindString
+					node.Value = res // Заменяем Base64 на чистый текст
+
+				case []byte:
+					// Это бинарные данные. Кодируем в красивую шестнадцатеричную строку
+					node.Kind = KindString
+					node.RawDisplay = true // Выводим без кавычек
+					node.IsHex = true
+
+					maxLen := len(res)
+					truncated := false
+					if maxLen > h.hexLimit && h.hexLimit > 0 {
+						maxLen = h.hexLimit
+						truncated = true
+					}
+
+					// Превращаем байты в hex-строку вида 0x7f07cea5...
+					hexStr := hex.EncodeToString(res[:maxLen])
+
+					if truncated {
+						node.Value = fmt.Sprintf("%s... (%d bytes)", hexStr, len(res))
+					} else {
+						node.Value = hexStr
+					}
+				}
+			} else {
+				// Обычная строка, оставляем как есть
+				node.Kind = KindString
+				node.Value = v
+			}
 		default:
 			node.Kind = KindNull
 			node.Value = "null"
@@ -452,6 +518,10 @@ func (h *SlogPrettyRenderer) renderIRTree(buf []byte, nodes []*TreeNode, states 
 			buf = append(buf, h.color.errkey...) // Инфраструктура ошибок (err, @text, @context)
 		case KindLocation:
 			buf = append(buf, h.color.loc...)
+		case KindInlineArray:
+			// Печатаем как примитив, но строго без кавычек
+			buf = append(buf, h.color.ctx...) // используем цвет текста
+			buf = append(buf, node.Value...)
 		default:
 			buf = append(buf, h.color.key...) // Обычные пользовательские ключи
 		}
@@ -475,13 +545,32 @@ func (h *SlogPrettyRenderer) renderIRTree(buf []byte, nodes []*TreeNode, states 
 				buf = append(buf, h.color.error...) // Само тело ошибки горит красным
 				buf = append(buf, node.Value...)
 			case KindString:
-				buf = append(buf, h.color.ctx...)
-				if !strings.HasPrefix(node.Key, "[") {
-					buf = append(buf, '"')
+				if node.IsHex {
+					// 1. Печатаем приглушенный префикс "hex("
+					buf = append(buf, h.color.stdots...)
+					buf = append(buf, "hex("...)
+					buf = append(buf, h.color.reset...)
+
+					// 2. Печатаем само значение (его по-прежнему будет удобно выделять даблкликом!)
+					buf = append(buf, h.color.ctx...)
 					buf = append(buf, node.Value...)
-					buf = append(buf, '"')
+					buf = append(buf, h.color.reset...)
+
+					// 3. Печатаем приглушенную закрывающую скобку ")"
+					buf = append(buf, h.color.stdots...)
+					buf = append(buf, ")"...)
+					buf = append(buf, h.color.reset...)
 				} else {
-					buf = append(buf, node.Value...)
+					// Старая логика для обычных строк
+					buf = append(buf, h.color.ctx...)
+					if node.RawDisplay || strings.HasPrefix(node.Key, "[") {
+						buf = append(buf, node.Value...)
+					} else {
+						buf = append(buf, '"')
+						buf = append(buf, node.Value...)
+						buf = append(buf, '"')
+					}
+					buf = append(buf, h.color.reset...)
 				}
 			case KindNull:
 				buf = append(buf, h.color.trace...)
@@ -583,6 +672,46 @@ func (h *SlogPrettyRenderer) appendStackLineIndent(buf []byte, fullStates []bool
 	buf = append(buf, "   "...)
 	buf = append(buf, h.color.reset...)
 	return buf
+}
+
+// tryDecodeBase64 пытается разобрать строку.
+// Если это валидный UTF-8 текст — возвращает его.
+// Если бинарник — возвращает слайс байт.
+// Если не Base64 — возвращает nil.
+func (h *SlogPrettyRenderer) tryDecodeBase64(s string) (any, bool) {
+	// Исключаем слишком короткие строки, чтобы избежать ложных срабатываний на обычных словах
+	if len(s) < 4 {
+		return nil, false
+	}
+
+	// Проверяем и декодируем Base64 (работаем со стандартным и URL-safe алфавитами)
+	encoding := base64.StdEncoding
+	if strings.ContainsAny(s, "-_") {
+		encoding = base64.URLEncoding
+	}
+
+	decoded, err := encoding.DecodeString(s)
+	if err != nil {
+		return nil, false
+	}
+
+	// Проверяем, является ли результат валидной Unicode строкой
+	if utf8.Valid(decoded) {
+		// Дополнительный фильтр: проверяем, что это печатаемые символы, а не бинарный мусор, случайно совпавший с UTF-8
+		isPrintable := true
+		for _, r := range string(decoded) {
+			if r < 32 && r != '\n' && r != '\r' && r != '\t' {
+				isPrintable = false
+				break
+			}
+		}
+		if isPrintable {
+			return string(decoded), true
+		}
+	}
+
+	// Если не текст — возвращаем как бинарный слайс
+	return decoded, true
 }
 
 func appendRawSlogValue(buf []byte, v slog.Value) []byte {
