@@ -112,6 +112,7 @@ func (s *slogTreeContextState) closeStage() {
 	} else {
 		s.stage = make([]slog.Attr, 1, errorContextLengthPrediction)
 	}
+	s.name = ""
 }
 
 type slogFlatContextState struct {

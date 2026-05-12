@@ -31,7 +31,8 @@ func main() {
 			&slog.HandlerOptions{
 				Level: slog.LevelDebug,
 			},
-			false,
+			true,
+			-1,
 		),
 	)
 
@@ -63,10 +64,10 @@ func main() {
 	logger.Info("with internal text json tree", slog.String("obj", `{"foo": "bar"}`))
 	logger.Info("with internal text json array", slog.String("obj", `[1,2,3]`))
 
-	logger = slog.New(errorsctx.NewSLogHandlerFlat(
-		slog.NewJSONHandler(&fancyJSONWriter{}, &slog.HandlerOptions{}),
-	))
-	logger.Error("log error with flat structured context", err)
+	// logger = slog.New(errorsctx.NewSLogHandlerFlat(
+	// 	slog.NewJSONHandler(&fancyJSONWriter{}, &slog.HandlerOptions{}),
+	// ))
+	// logger.Error("log error with flat structured context", err)
 }
 
 type fancyJSONWriter struct{}
