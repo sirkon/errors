@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"os"
@@ -36,6 +37,8 @@ func main() {
 		),
 	)
 
+	logger.Error("pure foreign error", io.EOF)
+	logger.Error("log error with just layers", (errors.Wrap(io.EOF, "wrap")))
 	logger.Error("log error with tree structured context", err)
 	logger.Error("log marked error with tree", errors.Spec(err, new(0)))
 	logger.Error("log marked foreign error with tree beneath",

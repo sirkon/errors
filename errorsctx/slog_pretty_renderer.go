@@ -251,9 +251,6 @@ func (h *SlogPrettyRenderer) buildIRTree(key string, val slog.Value) *TreeNode {
 				node.Key = "err"
 			}
 
-			// Сам корневой узел ошибки размечаем как KindErrorNode
-			node.Kind = KindErrorNode
-
 			var err *errors.Error
 			if er, ok := e.(*errors.Error); ok {
 				err = er
@@ -261,25 +258,53 @@ func (h *SlogPrettyRenderer) buildIRTree(key string, val slog.Value) *TreeNode {
 				err, _ = errors.AsType[*errors.Error](e)
 			}
 
-			// Текст ошибки горит красным
-			node.Children = append(node.Children, &TreeNode{Key: "@text", Value: e.Error(), Kind: KindErrorText})
-
-			// Блок контекста ошибки
-			ctxNode := &TreeNode{Key: "@context", Kind: KindErrorNode}
-
 			if err != nil {
-				// Если это наша родная ошибка sirkon/errors, раскладываем дерево
-				for _, subAttr := range errors.SLogTreeContext(err) {
-					ctxNode.Children = append(ctxNode.Children, h.buildIRTree(subAttr.Key, subAttr.Value))
-				}
-			} else {
-				// Если это чужая ошибка (foreign error), контекст пустой, но узел создаем
-				ctxNode.Value = "{}"
-				ctxNode.Kind = KindNull
-			}
+				// Получаем контекст ошибки
+				ctxAttrs := errors.SLogTreeContext(err)
 
-			node.Children = append(node.Children, ctxNode)
-			return node
+				// Если контекст пустой — ошибка без слоёв (просто врапнутая)
+				if len(ctxAttrs) == 0 {
+					node.Kind = KindErrorText
+					node.Value = e.Error()
+					return node
+				}
+
+				// Есть слои — строим дерево
+				node.Kind = KindErrorNode
+				node.Children = append(node.Children, &TreeNode{
+					Key:   "@text",
+					Value: e.Error(),
+					Kind:  KindErrorText,
+				})
+
+				ctxNode := &TreeNode{Key: "@context", Kind: KindErrorNode}
+
+				for _, subAttr := range ctxAttrs {
+					child := h.buildIRTree(subAttr.Key, subAttr.Value)
+
+					// Если это слой с пустым контекстом (например WRAP: wrap с пустым значением)
+					if child.Kind == KindGroup && len(child.Children) == 1 {
+						// Проверяем, не является ли единственный ребенок пустым значением
+						onlyChild := child.Children[0]
+						if onlyChild.Key == "" && (onlyChild.Value == "<nil>" || onlyChild.Value == "") {
+							// Превращаем группу в плоский узел без детей
+							child.Kind = KindString
+							child.Children = nil
+							// child.Value уже содержит "wrap" из ключа, оставляем как есть
+						}
+					}
+
+					ctxNode.Children = append(ctxNode.Children, child)
+				}
+
+				node.Children = append(node.Children, ctxNode)
+				return node
+			} else {
+				// Чужая ошибка (foreign error) — выводим как плоскую строку
+				node.Kind = KindErrorText
+				node.Value = e.Error()
+				return node
+			}
 		}
 	}
 
